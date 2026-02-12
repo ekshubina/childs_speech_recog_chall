@@ -1,0 +1,26 @@
+# Core ML/DL Libraries
+torch>=2.0.0
+torchaudio>=2.0.0
+transformers>=4.35.0
+accelerate>=0.24.0
+
+# Audio Processing
+librosa>=0.10.0
+soundfile
+
+# Whisper
+openai-whisper>=20231117
+
+# Data Processing
+datasets>=2.14.0
+numpy
+pandas
+
+# Evaluation
+jiwer>=3.0.0
+
+# Configuration & Utilities
+pyyaml>=6.0
+
+# Testing
+pytest

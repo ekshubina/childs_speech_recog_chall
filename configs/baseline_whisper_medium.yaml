@@ -1,0 +1,127 @@
+# Baseline Whisper-Medium Configuration
+# For fine-tuning on children's speech recognition task
+
+# Model Configuration
+model:
+  name: whisper
+  variant: medium
+  pretrained: openai/whisper-medium
+  language: en
+  task: transcribe
+  forced_decoder_ids: null  # Allow model to be language-agnostic during fine-tuning
+  
+  # Fine-tuning settings
+  dropout: 0.1
+  freeze_encoder: false  # Train both encoder and decoder
+  gradient_checkpointing: true  # Save memory during training
+
+# Data Configuration
+data:
+  # Training data
+  train_manifest: data/train_word_transcripts.jsonl
+  audio_dirs:
+    - data/audio_0
+    - data/audio_1
+    - data/audio_2
+  
+  # Validation split
+  val_ratio: 0.1  # 10% for validation
+  stratify_by: age_bucket  # Stratify split by age groups for representative validation
+  
+  # Audio preprocessing
+  sample_rate: 16000  # Whisper expects 16kHz audio
+  normalize_audio: true
+  target_length: 30  # Max audio length in seconds (Whisper's max is 30s)
+  
+  # Text preprocessing
+  normalize_text: true  # Use Whisper's EnglishTextNormalizer
+  
+# Training Configuration
+training:
+  # Output and checkpointing
+  output_dir: checkpoints/baseline_whisper_medium
+  save_steps: 1000
+  save_total_limit: 3  # Keep only best 3 checkpoints
+  logging_dir: logs/baseline_whisper_medium
+  logging_steps: 100
+  
+  # Training hyperparameters
+  num_epochs: 10
+  batch_size: 8  # Per-device batch size
+  gradient_accumulation_steps: 4  # Effective batch size = 8 * 4 = 32
+  learning_rate: 1.0e-5
+  warmup_steps: 500
+  weight_decay: 0.01
+  
+  # Mixed precision training
+  fp16: true  # Use FP16 mixed precision to reduce memory usage
+  
+  # Optimization
+  optim: adamw_torch
+  max_grad_norm: 1.0
+  
+  # Evaluation
+  evaluation_strategy: steps
+  eval_steps: 500
+  per_device_eval_batch_size: 16  # Larger batch size for eval (no gradients)
+  
+  # Data loading
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+  
+  # Reproducibility
+  seed: 42
+  
+  # Early stopping (optional)
+  load_best_model_at_end: true
+  metric_for_best_model: wer
+  greater_is_better: false  # Lower WER is better
+  
+  # Performance
+  remove_unused_columns: false  # Keep all columns for custom processing
+  prediction_loss_only: false
+  
+# Evaluation Configuration
+evaluation:
+  # Metrics
+  primary_metric: wer  # Word Error Rate
+  compute_cer: false  # Character Error Rate (optional)
+  
+  # Text normalization for scoring
+  normalize_predictions: true
+  normalize_references: true
+  
+  # Analysis
+  save_predictions: true
+  predictions_file: predictions/baseline_whisper_medium_val.jsonl
+  
+  # Group analysis
+  analyze_by_groups:
+    - age_bucket  # Analyze WER by age groups
+  
+# Inference Configuration
+inference:
+  # Generation parameters for Whisper
+  max_length: 448  # Whisper's default max length
+  num_beams: 5  # Beam search for better quality
+  temperature: 0.0  # Greedy decoding (deterministic)
+  
+  # Batch processing
+  batch_size: 16
+  
+  # Device
+  device: cuda  # Use GPU if available, else CPU
+  
+  # Output format
+  return_timestamps: false  # Don't need timestamps for this competition
+  return_language: false
+
+# System Configuration
+system:
+  # Logging
+  log_level: INFO
+  verbose: true
+  
+  # Reproducibility
+  deterministic: true
+  benchmark: false  # Disable cudnn.benchmark for reproducibility
