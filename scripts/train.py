@@ -181,8 +181,13 @@ def main():
         logger.info(f"Validation dataset size: {len(val_dataset):,}")
         
         # Load model
-        logger.info("Loading model...")
+        logger.info("Creating model...")
         model = ModelFactory.create_model(config)
+        
+        # Load pretrained weights
+        pretrained_path = config['model'].get('pretrained', f"openai/whisper-{config['model']['variant']}")
+        logger.info(f"Loading pretrained weights from {pretrained_path}...")
+        model.load(pretrained_path)
         logger.info("Model loaded successfully")
         
         # Prepare model for fine-tuning

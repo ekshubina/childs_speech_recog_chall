@@ -176,7 +176,7 @@ class WhisperTrainer(Seq2SeqTrainer):
             warmup_steps=train_cfg.warmup_steps,
             gradient_accumulation_steps=train_cfg.gradient_accumulation_steps,
             fp16=train_cfg.fp16,
-            evaluation_strategy='steps',
+            eval_strategy='steps',
             save_strategy='steps',
             save_steps=train_cfg.save_steps,
             eval_steps=train_cfg.eval_steps,
@@ -195,11 +195,10 @@ class WhisperTrainer(Seq2SeqTrainer):
         
         # Use default data collator if not provided
         if data_collator is None:
-            from transformers import DataCollatorForSeq2Seq
-            data_collator = DataCollatorForSeq2Seq(
-                tokenizer=processor.tokenizer,
-                model=model,
-                padding=True,
+            from src.data.dataset import WhisperDataCollator
+            data_collator = WhisperDataCollator(
+                processor=processor,
+                padding='longest',
             )
         
         # Create compute_metrics wrapper with tokenizer
@@ -224,7 +223,6 @@ class WhisperTrainer(Seq2SeqTrainer):
             args=training_args,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
-            tokenizer=processor.tokenizer,
             data_collator=data_collator,
             compute_metrics=compute_metrics_with_tokenizer,
         )

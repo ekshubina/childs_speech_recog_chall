@@ -24,7 +24,10 @@ cd childs_speech_recog_chall
 # Install dependencies
 pip install -r requirements.txt
 
-# Train baseline model
+# Quick test - validate setup (100 samples, ~5 minutes)
+python scripts/train.py --config configs/baseline_whisper_medium.yaml --debug
+
+# Full training - fine-tune baseline model (86K samples, several hours)
 python scripts/train.py --config configs/baseline_whisper_medium.yaml
 
 # Generate predictions
@@ -67,6 +70,7 @@ Core dependencies:
 - `jiwer>=3.0.0` - Word Error Rate computation
 - `openai-whisper>=20231117` - Whisper's text normalizer
 - `accelerate>=0.24.0` - Distributed training support
+- `tensorboard` - Training visualization and monitoring
 
 3. **Prepare data:**
 ```bash
@@ -166,30 +170,55 @@ Create custom configs by copying `baseline_whisper_medium.yaml` and modifying pa
 
 ### Training
 
-**Basic training:**
+**Quick test (recommended first step):**
+
+Before running full training, validate your setup with a quick test on 100 samples:
+```bash
+python scripts/train.py --config configs/baseline_whisper_medium.yaml --debug
+```
+This runs training on 100 training samples and 20 validation samples, completing in just a few minutes. Use this to:
+- Verify all dependencies are installed correctly
+- Test the data pipeline and model loading
+- Ensure your environment has sufficient memory
+- Validate the training configuration
+
+**Full training:**
 ```bash
 python scripts/train.py --config configs/baseline_whisper_medium.yaml
 ```
+Training 86K+ samples will take several hours depending on your hardware.
 
 **Resume from checkpoint:**
 ```bash
 python scripts/train.py \
     --config configs/baseline_whisper_medium.yaml \
-    --resume checkpoints/whisper-medium-finetuned/checkpoint-5000
+    --resume checkpoints/baseline_whisper_medium/checkpoint-5000
 ```
 
-**Training on subset (for testing):**
-```python
-# Edit config YAML to add:
-data:
-  max_samples: 10000  # Use only 10K samples for quick validation
+**Custom validation split:**
+```bash
+python scripts/train.py \
+    --config configs/baseline_whisper_medium.yaml \
+    --val-ratio 0.15  # Use 15% for validation instead of default 10%
 ```
 
 **Monitor training:**
-Training logs are saved to `checkpoints/<output_dir>/training.log`. Key metrics:
+
+Training progress is logged to both console and `logs/train_*.log` files. Key metrics:
 - `train_loss`: Training loss per batch
 - `eval_loss`: Validation loss
 - `eval_wer`: Validation Word Error Rate (primary metric)
+
+Monitor in real-time:
+```bash
+# Watch latest log file
+tail -f logs/train_*.log
+
+# View with TensorBoard
+tensorboard --logdir logs/baseline_whisper_medium
+```
+
+Checkpoints are saved to `checkpoints/baseline_whisper_medium/` every 1000 steps.
 
 ### Inference
 

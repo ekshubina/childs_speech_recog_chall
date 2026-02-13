@@ -21,6 +21,7 @@ jiwer>=3.0.0
 
 # Configuration & Utilities
 pyyaml>=6.0
+tensorboard
 
 # Testing
 pytest
