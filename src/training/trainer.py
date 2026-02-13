@@ -137,21 +137,40 @@ class WhisperTrainer(Seq2SeqTrainer):
         
         training_config = config['training']
         
+        # Detect if we're on CPU and adjust batch size if needed
+        is_cpu = not torch.cuda.is_available()
+        original_batch_size = training_config.get('batch_size', 8)
+        batch_size = original_batch_size
+        
+        if is_cpu and original_batch_size > 4:
+            batch_size = 4  # Reduce batch size for CPU training
+            logger.warning(
+                f"CPU training detected. Reducing batch_size from {original_batch_size} to {batch_size} "
+                f"to accommodate CPU memory constraints."
+            )
+        
         # Create training config
         train_cfg = WhisperTrainingConfig(
             output_dir=training_config.get('output_dir', 'checkpoints/whisper-finetuned'),
             num_epochs=training_config.get('num_epochs', 10),
-            batch_size=training_config.get('batch_size', 8),
+            batch_size=batch_size,
             eval_batch_size=training_config.get('eval_batch_size', 8),
             learning_rate=training_config.get('learning_rate', 1e-5),
             warmup_steps=training_config.get('warmup_steps', 500),
             gradient_accumulation_steps=training_config.get('gradient_accumulation_steps', 4),
-            fp16=training_config.get('fp16', True) and torch.cuda.is_available(),
+            fp16=training_config.get('fp16', True) and torch.cuda.is_available(),  # Only enable fp16 with CUDA
             save_steps=training_config.get('save_steps', 1000),
             eval_steps=training_config.get('eval_steps', 1000),
             logging_steps=training_config.get('logging_steps', 100),
             save_total_limit=training_config.get('save_total_limit', 3),
         )
+        
+        # Log warning if fp16 requested but CUDA not available
+        if training_config.get('fp16', False) and not torch.cuda.is_available():
+            logger.warning(
+                "fp16=true in config but CUDA not available. "
+                "Disabling fp16 (only supported on CUDA). Training will use fp32."
+            )
         
         # Create output directory
         output_dir = Path(train_cfg.output_dir)

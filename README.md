@@ -4,7 +4,7 @@ A modular, production-ready automatic speech recognition (ASR) system for transc
 
 ## Overview
 
-Children's speech presents unique challenges for ASR systems due to developing vocal tracts, pronunciation variations, and diverse age-related characteristics. This project implements a baseline system using OpenAI's Whisper-medium model, fine-tuned on 95K+ children's speech samples spanning ages 3-12+.
+Children's speech presents unique challenges for ASR systems due to developing vocal tracts, pronunciation variations, and diverse age-related characteristics. This project implements a baseline system using OpenAI's Whisper-small model, fine-tuned on 95K+ children's speech samples spanning ages 3-12+.
 
 **Key Features:**
 - 🎯 Modular architecture supporting easy model experimentation
@@ -16,6 +16,14 @@ Children's speech presents unique challenges for ASR systems due to developing v
 
 ## Quick Start
 
+**🚀 Try in Google Colab (No Setup Required):**
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/your-username/childs_speech_recog_chall/blob/main/colab_training.ipynb)
+
+Click the badge above to open a ready-to-use notebook with GPU support!
+
+**📋 Local Setup:**
+
 ```bash
 # Clone repository
 git clone <repository-url>
@@ -25,20 +33,20 @@ cd childs_speech_recog_chall
 pip install -r requirements.txt
 
 # Quick test - validate setup (100 samples, ~5 minutes)
-python scripts/train.py --config configs/baseline_whisper_medium.yaml --debug
+python scripts/train.py --config configs/baseline_whisper_small.yaml --debug
 
 # Full training - fine-tune baseline model (86K samples, several hours)
-python scripts/train.py --config configs/baseline_whisper_medium.yaml
+python scripts/train.py --config configs/baseline_whisper_small.yaml
 
 # Generate predictions
 python scripts/predict.py \
-    --model-path checkpoints/whisper-medium-finetuned \
+    --model-path checkpoints/whisper-small-finetuned \
     --input-jsonl data/test_manifest.jsonl \
     --output-jsonl predictions.jsonl
 
 # Evaluate on validation set
 python scripts/evaluate.py \
-    --model-path checkpoints/whisper-medium-finetuned \
+    --model-path checkpoints/whisper-small-finetuned \
     --val-manifest data/val_manifest.jsonl
 ```
 
@@ -46,10 +54,154 @@ python scripts/evaluate.py \
 
 ### Requirements
 - Python 3.8+
-- CUDA-capable GPU with 16GB+ VRAM (for training)
+- CUDA-capable GPU with 8GB+ VRAM (for training)
 - 50GB+ disk space for audio data and model checkpoints
 
-### Setup
+### Option 1: Google Colab (Recommended for Quick Start)
+
+Google Colab provides free GPU access, making it ideal for training without local hardware. Here's how to set up:
+
+**Step 1: Create a new Colab notebook**
+1. Go to [Google Colab](https://colab.research.google.com/)
+2. Click `File` → `New notebook`
+3. Enable GPU: `Runtime` → `Change runtime type` → `Hardware accelerator: T4 GPU`
+
+**Step 2: Clone repository and setup**
+```python
+# Clone repository
+!git clone https://github.com/your-username/childs_speech_recog_chall.git
+%cd childs_speech_recog_chall
+
+# Install dependencies
+!pip install -q -r requirements.txt
+
+# Verify installation
+!python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}')"
+```
+
+**Step 3: Upload data to Google Drive (one-time setup)**
+
+Since Colab has limited session storage, mount Google Drive:
+```python
+from google.colab import drive
+drive.mount('/content/drive')
+
+# Create project directory in Drive (first time only)
+!mkdir -p /content/drive/MyDrive/child_speech_data
+```
+
+Upload your data files to `MyDrive/child_speech_data/`:
+- Upload `train_word_transcripts.jsonl`
+- Upload audio directories: `audio_0/`, `audio_1/`, `audio_2/`
+
+Then link to your Colab workspace:
+```python
+# Create symlinks to access Drive data
+!ln -s /content/drive/MyDrive/child_speech_data/train_word_transcripts.jsonl data/train_word_transcripts.jsonl
+!ln -s /content/drive/MyDrive/child_speech_data/audio_0 data/audio_0
+!ln -s /content/drive/MyDrive/child_speech_data/audio_1 data/audio_1
+!ln -s /content/drive/MyDrive/child_speech_data/audio_2 data/audio_2
+```
+
+**Alternative: Download data from URL (if available)**
+```python
+# Download and extract data
+!wget https://your-data-url.com/child_speech_data.tar.gz
+!tar -xzf child_speech_data.tar.gz -C data/
+```
+
+**Step 4: Run training**
+```python
+# Quick test (5-10 minutes on T4 GPU)
+!python scripts/train.py --config configs/baseline_whisper_small.yaml --debug
+
+# Full training (will take several hours)
+!python scripts/train.py --config configs/baseline_whisper_small.yaml
+```
+
+**Step 5: Save checkpoints to Drive**
+```python
+# Copy checkpoints to Drive for persistence
+!cp -r checkpoints/baseline_whisper_small /content/drive/MyDrive/child_speech_checkpoints/
+```
+
+**Step 6: Generate predictions**
+```python
+!python scripts/predict.py \
+    --model-path checkpoints/baseline_whisper_small/final_model \
+    --input-jsonl data/test_manifest.jsonl \
+    --output-jsonl predictions.jsonl
+
+# Download predictions
+from google.colab import files
+files.download('predictions.jsonl')
+```
+
+**Colab Tips:**
+- **Session timeout:** Colab disconnects after ~90 minutes of inactivity. Keep browser open or use [Colab Pro](https://colab.research.google.com/signup) for longer sessions
+- **GPU quota:** Free tier has daily limits. Upgrade to Colab Pro for more GPU time
+- **Checkpoints:** Always save to Drive! Local storage is lost when session ends
+- **Monitor training:** Use TensorBoard in Colab:
+  ```python
+  %load_ext tensorboard
+  %tensorboard --logdir logs/baseline_whisper_small
+  ```
+- **Debug mode first:** Always run `--debug` to verify setup before full training
+
+**Comparison: Colab vs Local:**
+
+| Feature | Google Colab Free | Google Colab Pro | Local (CUDA GPU) |
+|---------|-------------------|------------------|------------------|
+| GPU | T4 (16GB VRAM) | T4/V100 | Your hardware |
+| Training time (full) | 4-6 hours | 3-4 hours | 3-8 hours |
+| Session length | 12 hours max | 24 hours max | Unlimited |
+| Data persistence | Via Drive only | Via Drive only | Local disk |
+| Cost | Free | $10/month | Hardware cost |
+| Setup time | 5 minutes | 5 minutes | 15-30 minutes |
+
+**Complete Colab notebook template:**
+```python
+# === Setup ===
+!git clone https://github.com/your-username/childs_speech_recog_chall.git
+%cd childs_speech_recog_chall
+!pip install -q -r requirements.txt
+
+# === Mount Drive ===
+from google.colab import drive
+drive.mount('/content/drive')
+
+# === Link data (adjust paths to your Drive structure) ===
+!ln -sf /content/drive/MyDrive/child_speech_data/train_word_transcripts.jsonl data/train_word_transcripts.jsonl
+!ln -sf /content/drive/MyDrive/child_speech_data/audio_0 data/audio_0
+!ln -sf /content/drive/MyDrive/child_speech_data/audio_1 data/audio_1
+!ln -sf /content/drive/MyDrive/child_speech_data/audio_2 data/audio_2
+
+# === Verify GPU ===
+import torch
+print(f"CUDA available: {torch.cuda.is_available()}")
+print(f"GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None'}")
+
+# === Quick test ===
+!python scripts/train.py --config configs/baseline_whisper_small.yaml --debug
+
+# === Full training ===
+!python scripts/train.py --config configs/baseline_whisper_small.yaml
+
+# === Save to Drive ===
+!cp -r checkpoints/baseline_whisper_small /content/drive/MyDrive/child_speech_checkpoints/
+
+# === Generate predictions ===
+!python scripts/predict.py \
+    --model-path checkpoints/baseline_whisper_small/final_model \
+    --input-jsonl data/test_manifest.jsonl \
+    --output-jsonl predictions.jsonl
+
+# === Download results ===
+from google.colab import files
+files.download('predictions.jsonl')
+```
+
+### Option 2: Local Setup
 
 1. **Create virtual environment:**
 ```bash
@@ -86,8 +238,10 @@ python -c "import json; data = [json.loads(l) for l in open('data/train_word_tra
 
 ```
 childs_speech_recog_chall/
+├── colab_training.ipynb              # Google Colab notebook (click to open in Colab)
 ├── configs/                          # Configuration files
-│   └── baseline_whisper_medium.yaml  # Baseline model config
+│   ├── baseline_whisper_small.yaml   # Baseline model config (default)
+│   └── baseline_whisper_medium.yaml  # Alternative larger model config
 ├── data/                             # Data directory (audio files + manifests)
 │   ├── audio_0/                      # Audio files (part 1)
 │   ├── audio_1/                      # Audio files (part 2)
@@ -142,8 +296,8 @@ All experiments are controlled via YAML configuration files in `configs/`. Key p
 ```yaml
 model:
   name: whisper                       # Model type
-  variant: medium                     # Model size (tiny/base/small/medium/large)
-  pretrained: openai/whisper-medium   # Hugging Face model ID
+  variant: small                      # Model size (tiny/base/small/medium/large)
+  pretrained: openai/whisper-small    # Hugging Face model ID
 
 data:
   train_manifest: data/train_word_transcripts.jsonl
@@ -155,18 +309,18 @@ data:
   stratify_by: age_bucket             # Stratification field
 
 training:
-  batch_size: 8                       # Per-device batch size
+  batch_size: 12                      # Per-device batch size (optimized for small variant)
   learning_rate: 1.0e-05              # Learning rate
   num_epochs: 10                      # Training epochs
-  gradient_accumulation_steps: 4      # Gradient accumulation
+  gradient_accumulation_steps: 3      # Gradient accumulation
   fp16: true                          # Mixed precision training
   warmup_steps: 500                   # LR warmup steps
   save_steps: 1000                    # Checkpoint frequency
   eval_steps: 1000                    # Evaluation frequency
-  output_dir: checkpoints/whisper-medium-finetuned
+  output_dir: checkpoints/whisper-small-finetuned
 ```
 
-Create custom configs by copying `baseline_whisper_medium.yaml` and modifying parameters.
+Create custom configs by copying `baseline_whisper_small.yaml` and modifying parameters. A `baseline_whisper_medium.yaml` config is also available for larger-scale experiments.
 
 ### Training
 
@@ -174,7 +328,7 @@ Create custom configs by copying `baseline_whisper_medium.yaml` and modifying pa
 
 Before running full training, validate your setup with a quick test on 100 samples:
 ```bash
-python scripts/train.py --config configs/baseline_whisper_medium.yaml --debug
+python scripts/train.py --config configs/baseline_whisper_small.yaml --debug
 ```
 This runs training on 100 training samples and 20 validation samples, completing in just a few minutes. Use this to:
 - Verify all dependencies are installed correctly
@@ -184,21 +338,21 @@ This runs training on 100 training samples and 20 validation samples, completing
 
 **Full training:**
 ```bash
-python scripts/train.py --config configs/baseline_whisper_medium.yaml
+python scripts/train.py --config configs/baseline_whisper_small.yaml
 ```
 Training 86K+ samples will take several hours depending on your hardware.
 
 **Resume from checkpoint:**
 ```bash
 python scripts/train.py \
-    --config configs/baseline_whisper_medium.yaml \
-    --resume checkpoints/baseline_whisper_medium/checkpoint-5000
+    --config configs/baseline_whisper_small.yaml \
+    --resume checkpoints/baseline_whisper_small/checkpoint-5000
 ```
 
 **Custom validation split:**
 ```bash
 python scripts/train.py \
-    --config configs/baseline_whisper_medium.yaml \
+    --config configs/baseline_whisper_small.yaml \
     --val-ratio 0.15  # Use 15% for validation instead of default 10%
 ```
 
@@ -215,17 +369,17 @@ Monitor in real-time:
 tail -f logs/train_*.log
 
 # View with TensorBoard
-tensorboard --logdir logs/baseline_whisper_medium
+tensorboard --logdir logs/baseline_whisper_small
 ```
 
-Checkpoints are saved to `checkpoints/baseline_whisper_medium/` every 1000 steps.
+Checkpoints are saved to `checkpoints/baseline_whisper_small/` every 1000 steps.
 
 ### Inference
 
 **Generate predictions from trained model:**
 ```bash
 python scripts/predict.py \
-    --model-path checkpoints/whisper-medium-finetuned \
+    --model-path checkpoints/whisper-small-finetuned \
     --input-jsonl data/test_manifest.jsonl \
     --output-jsonl predictions.jsonl \
     --batch-size 16
@@ -242,7 +396,7 @@ python scripts/predict.py \
 **Evaluate model on validation set:**
 ```bash
 python scripts/evaluate.py \
-    --model-path checkpoints/whisper-medium-finetuned \
+    --model-path checkpoints/whisper-small-finetuned \
     --val-manifest data/val_manifest.jsonl
 ```
 
@@ -323,15 +477,15 @@ pytest --cov=src --cov-report=html
 **Symptoms:** Training crashes with `RuntimeError: CUDA out of memory`
 
 **Solutions:**
-- Reduce `batch_size` in config (try 4 or 2)
+- Reduce `batch_size` in config (try 8 or 4)
 - Increase `gradient_accumulation_steps` to maintain effective batch size
 - Enable gradient checkpointing (reduces memory at cost of speed)
-- Use smaller model variant (base or small instead of medium)
+- Use smaller model variant (base or tiny instead of small)
 
 ```yaml
 training:
-  batch_size: 4  # Reduce from 8
-  gradient_accumulation_steps: 8  # Increase from 4
+  batch_size: 8  # Reduce from 12
+  gradient_accumulation_steps: 6  # Increase from 3
 ```
 
 #### 2. Audio File Not Found
@@ -524,7 +678,7 @@ Track experiments systematically:
 
 1. **Create experiment config:**
 ```bash
-cp configs/baseline_whisper_medium.yaml configs/experiment_01_higher_lr.yaml
+cp configs/baseline_whisper_small.yaml configs/experiment_01_higher_lr.yaml
 # Edit hyperparameters
 ```
 
@@ -552,7 +706,7 @@ print(f"Exp2 WER: {exp2['best_wer']:.2%}")
 
 ### Phase 1: Baseline (Current)
 - ✅ Data pipeline with multi-directory support
-- ✅ Whisper-medium fine-tuning infrastructure
+- ✅ Whisper-small fine-tuning infrastructure
 - ✅ WER evaluation with text normalization
 - ✅ Training scripts and inference pipeline
 - ✅ Comprehensive testing suite

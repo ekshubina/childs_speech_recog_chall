@@ -31,7 +31,7 @@ class ModelFactory:
     
     Example:
         >>> from src.utils.config import load_config
-        >>> config = load_config('configs/baseline_whisper_medium.yaml')
+        >>> config = load_config('configs/baseline_whisper_small.yaml')
         >>> model = ModelFactory.create_model(config)
         >>> model.load()
         >>> transcription = model.transcribe('audio.flac')
@@ -58,7 +58,7 @@ class ModelFactory:
             config: Configuration dictionary containing model specification.
                    Required fields:
                    - config['model']['name']: Model type (e.g., 'whisper')
-                   - config['model']['variant']: Model variant (e.g., 'medium')
+                   - config['model']['variant']: Model variant (e.g., 'small')
                    Optional fields:
                    - config['model']['device']: Device to use ('cuda', 'cpu', 'mps')
         
@@ -77,8 +77,8 @@ class ModelFactory:
             >>> config = {
             ...     'model': {
             ...         'name': 'whisper',
-            ...         'variant': 'medium',
-            ...         'pretrained': 'openai/whisper-medium'
+            ...         'variant': 'small',
+            ...         'pretrained': 'openai/whisper-small'
             ...     }
             ... }
             >>> model = ModelFactory.create_model(config)
@@ -106,7 +106,7 @@ class ModelFactory:
             if model_name == 'whisper':
                 # Safe to cast since we know it's WhisperModel from registry
                 from src.models.whisper_model import WhisperModel as WM
-                variant = model_config.get('variant', 'medium')
+                variant = model_config.get('variant', 'small')
                 device = model_config.get('device', None)
                 model = WM(variant=variant, device=device)
                 logger.info(f"Created WhisperModel with variant='{variant}'")

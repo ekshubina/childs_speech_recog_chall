@@ -192,10 +192,10 @@ class TestWhisperModel:
         mock_model.to.return_value = mock_model
         mock_model.parameters.return_value = [torch.zeros(100)]
         
-        model = WhisperModel(variant='medium', device='cpu')
-        model.load()  # Should default to openai/whisper-medium
+        model = WhisperModel(variant='small', device='cpu')
+        model.load()  # Should default to openai/whisper-small
         
-        mock_model_class.from_pretrained.assert_called_once_with('openai/whisper-medium')
+        mock_model_class.from_pretrained.assert_called_once_with('openai/whisper-small')
     
     @patch('src.models.whisper_model.WhisperForConditionalGeneration')
     @patch('src.models.whisper_model.WhisperProcessor')
@@ -490,8 +490,8 @@ class TestModelFactory:
         config = {
             'model': {
                 'name': 'whisper',
-                'variant': 'medium',
-                'pretrained': 'openai/whisper-medium'
+                'variant': 'small',
+                'pretrained': 'openai/whisper-small'
             }
         }
         
@@ -499,7 +499,7 @@ class TestModelFactory:
         
         assert isinstance(model, WhisperModel)
         assert isinstance(model, BaseASRModel)
-        assert model.variant == 'medium'
+        assert model.variant == 'small'
     
     def test_factory_with_explicit_device(self):
         """Test factory creates model with explicit device."""

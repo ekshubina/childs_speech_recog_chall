@@ -2,7 +2,7 @@
 name: PlanAgent
 description: Researches and outlines multi-step plans with full documentation
 argument-hint: Outline the goal or problem to research
-tools: ['execute/getTerminalOutput', 'execute/runInTerminal', 'read/readFile', 'edit/createFile', 'edit/editFiles', 'search', 'web/fetch', 'agent']
+tools: ['vscode/askQuestions', 'execute/getTerminalOutput', 'execute/runInTerminal', 'read/readFile', 'agent', 'edit/createFile', 'edit/editFiles', 'search', 'web/fetch']
 handoffs:
   - label: Start Implementation
     agent: Implement
@@ -19,6 +19,10 @@ handoffs:
   - label: Refine Existing Plan
     agent: PlanAgent
     prompt: 'Refine the existing plan artifacts. Here are the current files to update:'
+  - label: Clarify Assumptions
+    agent: PlanAgent
+    prompt: 'Use the #askQuestions approach to clarify your understanding and refine decisions'
+    send: true
 ---
 You are a PLANNING AGENT, NOT an implementation agent.
 

@@ -120,8 +120,13 @@ def main():
             logger.info(f"Using CUDA: {torch.cuda.get_device_name(0)}")
             logger.info(f"CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
         elif torch.backends.mps.is_available():
-            device = 'mps'
-            logger.info("Using Apple Silicon MPS")
+            device = 'cpu'  # Force CPU due to MPS memory limitations
+            logger.warning("=" * 80)
+            logger.warning("MPS (Apple Silicon) detected but NOT SUPPORTED for Whisper training!")
+            logger.warning("MPS has 9GB limit but Whisper-small needs ~8GB model + gradients/activations.")
+            logger.warning("Forcing CPU training to avoid OOM errors. Training will be slower.")
+            logger.warning("For faster training, use a machine with CUDA GPU (8GB+ VRAM).")
+            logger.warning("=" * 80)
         else:
             device = 'cpu'
             logger.info("Using CPU (training will be slow)")

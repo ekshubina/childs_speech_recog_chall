@@ -35,13 +35,13 @@ class WhisperModel(BaseASRModel):
         processor (WhisperProcessor): The Whisper processor (feature extractor + tokenizer)
     
     Example:
-        >>> model = WhisperModel(variant='medium', device='cuda')
-        >>> model.load('openai/whisper-medium')
+        >>> model = WhisperModel(variant='small', device='cuda')
+        >>> model.load('openai/whisper-small')
         >>> transcription = model.transcribe('audio.flac')
         >>> model.save('checkpoints/finetuned_model')
     """
     
-    def __init__(self, variant: str = 'medium', device: Optional[str] = None):
+    def __init__(self, variant: str = 'small', device: Optional[str] = None):
         """
         Initialize WhisperModel.
         
@@ -59,7 +59,13 @@ class WhisperModel(BaseASRModel):
             if torch.cuda.is_available():
                 device = 'cuda'
             elif torch.backends.mps.is_available():
-                device = 'mps'
+                # MPS cannot train Whisper models due to memory constraints
+                logger.warning(
+                    "MPS backend detected but not recommended for Whisper training. "
+                    "Model requires ~8GB+ memory but MPS limit is ~9GB, leaving no room for gradients. "
+                    "Forcing CPU for training stability."
+                )
+                device = 'cpu'
             else:
                 device = 'cpu'
         

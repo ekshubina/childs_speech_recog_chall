@@ -23,7 +23,7 @@ Modular ASR system for DrivenData competition. Fine-tunes models on 95K+ childre
 
 ### Training Infrastructure
 - Wraps HuggingFace `Seq2SeqTrainer` via `WhisperTrainer` ([src/training/trainer.py](src/training/trainer.py))
-- Uses FP16 mixed precision + gradient accumulation (default: 4 steps) for memory efficiency
+- Uses FP16 mixed precision + gradient accumulation (default: 3 steps) for memory efficiency
 - Model preparation: `prepare_model_for_finetuning()` in [src/models/whisper_model.py](src/models/whisper_model.py)
 - Data collation: `WhisperDataCollator` handles batching with proper padding ([src/data/dataset.py](src/data/dataset.py))
 
@@ -31,13 +31,13 @@ Modular ASR system for DrivenData competition. Fine-tunes models on 95K+ childre
 ```bash
 # Generate predictions
 python scripts/predict.py \
-    --model-path checkpoints/whisper-medium-finetuned \
+    --model-path checkpoints/whisper-small-finetuned \
     --input-jsonl data/test_manifest.jsonl \
     --output-jsonl predictions.jsonl
 
 # Evaluate WER
 python scripts/evaluate.py \
-    --model-path checkpoints/whisper-medium-finetuned \
+    --model-path checkpoints/whisper-small-finetuned \
     --val-manifest data/val_manifest.jsonl
 ```
 
@@ -56,7 +56,7 @@ pytest tests/test_data.py   # Single test file
 ### Monitoring Training
 ```bash
 # TensorBoard logs automatically saved during training
-tensorboard --logdir checkpoints/baseline_whisper_medium/runs
+tensorboard --logdir checkpoints/baseline_whisper_small/runs
 ```
 
 ## Configuration System
@@ -65,8 +65,8 @@ All experiments controlled via YAML in `configs/`. Key sections:
 ```yaml
 model:
   name: whisper           # Used by ModelFactory
-  variant: medium         # Model size (tiny/base/small/medium/large)
-  pretrained: openai/whisper-medium
+  variant: small          # Model size (tiny/base/small/medium/large)
+  pretrained: openai/whisper-small
   freeze_encoder: false   # Train both encoder/decoder
   gradient_checkpointing: true  # Memory optimization
 
@@ -77,8 +77,8 @@ data:
   stratify_by: age_bucket      # Critical for representative splits
 
 training:
-  batch_size: 8                 # Per-device
-  gradient_accumulation_steps: 4  # Effective batch = 32
+  batch_size: 12                # Per-device
+  gradient_accumulation_steps: 3  # Effective batch = 36
   fp16: true                    # Mixed precision (requires CUDA)
   learning_rate: 1e-5
   warmup_steps: 500
@@ -140,7 +140,7 @@ training:
 4. **Text normalization**: Don't use custom normalization - breaks competition scoring alignment
 5. **Model loading**: `ModelFactory.create_model()` returns uninitialized model - call `.load()` before use
 6. **Debug mode**: Use `--debug` flag for quick smoke tests before full runs
-7. **GPU memory**: Default config assumes 16GB VRAM - adjust batch_size + gradient_accumulation_steps if needed
+7. **GPU memory**: Default config assumes 8GB VRAM - adjust batch_size + gradient_accumulation_steps if needed
 
 ## Documentation References
 - System architecture: [docs/SystemDesign.md](docs/SystemDesign.md)
