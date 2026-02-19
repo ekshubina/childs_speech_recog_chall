@@ -318,7 +318,7 @@ def prepare_model_for_finetuning(
     
     # Set language and task
     model.config.forced_decoder_ids = None
-    model.config.suppress_tokens = []
+    model.generation_config.suppress_tokens = []
     model.generation_config.language = language
     model.generation_config.task = task
     
