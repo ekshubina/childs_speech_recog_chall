@@ -52,7 +52,7 @@ logs/
 *.safetensors
 
 # Data (large audio files)
-data/
+/data/
 
 # Testing
 .pytest_cache/
