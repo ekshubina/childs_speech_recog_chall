@@ -113,7 +113,13 @@ class WhisperModel(BaseASRModel):
             # Setting forced_decoder_ids=None allows the model to predict language
             # but we'll set language in generation config instead
             self.model.config.forced_decoder_ids = None
-            self.model.config.suppress_tokens = []
+            
+            # Ensure suppress_tokens is not in config (transformers requirement)
+            if hasattr(self.model.config, 'suppress_tokens'):
+                delattr(self.model.config, 'suppress_tokens')
+            
+            # Set suppress_tokens in generation_config where it belongs
+            self.model.generation_config.suppress_tokens = []
             
             # Set language to English in generation config
             self.model.generation_config.language = 'english'
@@ -318,6 +324,12 @@ def prepare_model_for_finetuning(
     
     # Set language and task
     model.config.forced_decoder_ids = None
+    
+    # Ensure suppress_tokens is not in config (transformers requirement)
+    if hasattr(model.config, 'suppress_tokens'):
+        delattr(model.config, 'suppress_tokens')
+    
+    # Set suppress_tokens in generation_config where it belongs
     model.generation_config.suppress_tokens = []
     model.generation_config.language = language
     model.generation_config.task = task
