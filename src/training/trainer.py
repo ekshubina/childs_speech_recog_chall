@@ -252,15 +252,19 @@ class WhisperTrainer(Seq2SeqTrainer):
         
         return trainer
     
-    def log(self, logs: Dict[str, float]) -> None:
+    def log(self, logs: Dict[str, float], start_time: Optional[float] = None) -> None:
         """
         Override log method to add custom logging.
         
         Args:
             logs: Dictionary of metrics to log
+            start_time: Optional start time for computing elapsed time (added in newer transformers)
         """
         # Add custom logging here if needed
-        super().log(logs)
+        if start_time is not None:
+            super().log(logs, start_time)
+        else:
+            super().log(logs)
         
         # Log WER prominently if present
         if 'eval_wer' in logs:

@@ -21,7 +21,8 @@ jiwer>=3.0.0
 
 # Configuration & Utilities
 pyyaml>=6.0
-tensorboard
+setuptools<75  # pkg_resources (used by tensorboard) was removed in setuptools 75+
+tensorboard>=2.17.0  # 2.17+ uses importlib.metadata, no longer requires pkg_resources
 
 # Testing
 pytest
