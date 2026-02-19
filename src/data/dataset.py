@@ -388,17 +388,11 @@ class WhisperDataCollator:
         
         padded_labels = torch.stack(padded_labels)
         
-        # Prepare batch
+        # Prepare batch (only include model inputs, not metadata)
+        # Metadata fields like utterance_id, age_bucket should not be passed to model.generate()
         batch = {
             'input_features': input_features,
             'labels': padded_labels,
         }
-        
-        # Include metadata if needed (for evaluation)
-        if 'utterance_id' in features[0]:
-            batch['utterance_ids'] = [f['utterance_id'] for f in features]
-        
-        if 'age_bucket' in features[0]:
-            batch['age_buckets'] = [f['age_bucket'] for f in features]
         
         return batch
