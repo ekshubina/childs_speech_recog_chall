@@ -275,7 +275,8 @@ class WhisperTrainer(Seq2SeqTrainer):
             trial: Trial object (for hyperparameter search)
             metrics: Metrics to save with checkpoint
         """
-        checkpoint_folder = super()._save_checkpoint(model, trial, metrics)
+        # Call parent without metrics argument for compatibility
+        checkpoint_folder = super()._save_checkpoint(model, trial)
         
         if checkpoint_folder is not None:
             logger.info(f"Checkpoint saved to: {checkpoint_folder}")
