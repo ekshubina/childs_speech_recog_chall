@@ -199,8 +199,8 @@ def main():
         logger.info("Preparing model for fine-tuning...")
         model_obj = model.model  # Get the actual model from WhisperModel wrapper
         
-        freeze_encoder = config['training'].get('freeze_encoder', False)
-        dropout = config['training'].get('dropout', 0.1)
+        freeze_encoder = config['model'].get('freeze_encoder', False)
+        dropout = config['model'].get('dropout', 0.1)
         
         model_obj = prepare_model_for_finetuning(
             model_obj,
