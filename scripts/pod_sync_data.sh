@@ -94,14 +94,37 @@ echo ">>> Uploading train_word_transcripts.jsonl ..."
 # shellcheck disable=SC2086
 aws s3 cp \
     "$REPO_ROOT/data/train_word_transcripts.jsonl" "$S3_BASE/train_word_transcripts.jsonl" \
-    $S3_ARGS
+    $S3_ARGS \
+    --no-progress
 
 # ── Verify ────────────────────────────────────────────────────────────────────────
+# head-object on first+last local file per dir: 2 API calls each, no listing.
 echo ""
-echo "Verifying upload..."
+echo "Verifying upload (spot-checking first + last file per dir)..."
+ALL_OK=true
 for dir in audio_0 audio_1 audio_2; do
-    COUNT=$(aws s3 ls "$S3_BASE/$dir/" $S3_ARGS --recursive | wc -l | tr -d ' ')
-    echo "  $dir: $COUNT files"
+    # Disable pipefail temporarily: find|sort|head -1 causes SIGPIPE (exit 141) under pipefail
+    set +o pipefail
+    FIRST=$(find "$REPO_ROOT/data/$dir" -type f | sort | head -1)
+    LAST=$(find "$REPO_ROOT/data/$dir" -type f | sort | tail -1)
+    TOTAL=$(find "$REPO_ROOT/data/$dir" -type f | wc -l | tr -d ' ')
+    set -o pipefail
+    OK=true
+    for f in "$FIRST" "$LAST"; do
+        KEY="data/$dir/${f##*/}"
+        # shellcheck disable=SC2086
+        if ! aws s3api head-object \
+                --bucket "$RUNPOD_S3_BUCKET" \
+                --key "$KEY" \
+                $S3_ARGS \
+                --output text \
+                --query 'ContentLength' &>/dev/null; then
+            echo "  MISSING: $KEY"
+            OK=false; ALL_OK=false
+        fi
+    done
+    $OK && echo "  $dir: OK  ($TOTAL local files; first+last confirmed in S3)"
 done
+$ALL_OK || { echo "Some files missing — re-run to retry."; exit 1; }
 echo ""
 echo "Upload complete. Files are immediately available at /workspace/data/ when a Pod mounts the volume."
