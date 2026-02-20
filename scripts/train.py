@@ -194,6 +194,10 @@ def main():
         logger.info("Starting training...")
         logger.info("=" * 80)
 
+        # Reset peak VRAM counters so the summary reflects training only (not model load)
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+
         train_result = trainer.train(resume_from_checkpoint=args.resume)
 
         # Log training results
@@ -225,6 +229,47 @@ def main():
 
         logger.info("=" * 80)
         logger.info("Training script completed successfully!")
+        logger.info("=" * 80)
+
+        # ── System Resource Summary (for hyperparameter tuning) ────────────────
+        logger.info("=" * 80)
+        logger.info("System Resource Summary")
+        logger.info("=" * 80)
+
+        if torch.cuda.is_available():
+            peak_alloc = torch.cuda.max_memory_allocated(0)
+            peak_reserved = torch.cuda.max_memory_reserved(0)
+            total_mem = torch.cuda.get_device_properties(0).total_memory
+            logger.info(f"GPU:                    {torch.cuda.get_device_name(0)}")
+            logger.info(f"  Total VRAM:           {total_mem / 1e9:.2f} GB")
+            logger.info(f"  Peak allocated:       {peak_alloc / 1e9:.2f} GB  ({100 * peak_alloc / total_mem:.1f}% of VRAM)")
+            logger.info(
+                f"  Peak reserved:        {peak_reserved / 1e9:.2f} GB  ({100 * peak_reserved / total_mem:.1f}% of VRAM)"
+            )
+            logger.info(f"  Free headroom:        {(total_mem - peak_reserved) / 1e9:.2f} GB")
+            if (total_mem - peak_reserved) / 1e9 > 2.0:
+                logger.info("  Tip: >2 GB free — consider increasing batch_size or reducing gradient_accumulation_steps")
+            elif peak_reserved / total_mem > 0.95:
+                logger.info("  Tip: VRAM >95% used — consider enabling gradient_checkpointing or reducing batch_size")
+        else:
+            logger.info("GPU: not available (CPU training)")
+
+        t_metrics = train_result.metrics
+        logger.info(f"Throughput:             {t_metrics.get('train_samples_per_second', 0):.2f} samples/sec")
+        total_secs = t_metrics.get("train_runtime", 0)
+        logger.info(f"Total training time:    {total_secs:.0f} s  ({total_secs / 60:.1f} min)")
+        total_steps = int(round(t_metrics.get("train_steps_per_second", 0) * total_secs))
+        if total_steps:
+            logger.info(f"Total steps:            {total_steps:,}")
+
+        per_device_bs = config["training"]["batch_size"]
+        grad_accum = config["training"].get("gradient_accumulation_steps", 1)
+        effective_bs = per_device_bs * grad_accum
+        logger.info(f"Effective batch size:   {effective_bs}  (per_device={per_device_bs} × grad_accum={grad_accum})")
+        logger.info(f"Learning rate:          {config['training'].get('learning_rate', 'N/A')}")
+        logger.info(f"FP16:                   {config['training'].get('fp16', False)}")
+        logger.info(f"Gradient checkpointing: {config['model'].get('gradient_checkpointing', False)}")
+        logger.info(f"Freeze encoder:         {config['model'].get('freeze_encoder', False)}")
         logger.info("=" * 80)
 
         return 0
