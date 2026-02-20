@@ -56,15 +56,36 @@ echo "Endpoint:     $RUNPOD_S3_ENDPOINT"
 echo "No Pod needed — upload goes directly to the network volume via S3 API."
 echo ""
 
+MARKER_DIR="$REPO_ROOT/.sync_markers"
+mkdir -p "$MARKER_DIR"
+
 # Upload audio directories (parallel multipart, auto-resume on retry)
+# Marker files in .sync_markers/ record completed dirs so re-runs skip the
+# remote listing phase (which triggers RunPod S3 pagination bugs on large dirs).
 for dir in audio_0 audio_1 audio_2; do
+    MARKER="$MARKER_DIR/$dir.done"
+    if [[ -f "$MARKER" ]]; then
+        echo ">>> Skipping $dir/ (already uploaded — delete $MARKER to re-sync)"
+        continue
+    fi
     echo ">>> Syncing $dir/ ..."
     # shellcheck disable=SC2086
-    aws s3 sync \
+    TOTAL=$(find "$REPO_ROOT/data/$dir" -type f | wc -l | tr -d ' ')
+    echo ">>> Uploading $dir/ ($TOTAL files) ..."
+    # Use cp --recursive instead of sync: sync must LIST the remote bucket first,
+    # which triggers RunPod S3's broken pagination on large directories.
+    # cp --recursive reads only local files and uploads — no remote listing needed.
+    # shellcheck disable=SC2086
+    aws s3 cp \
         "$REPO_ROOT/data/$dir" "$S3_BASE/$dir" \
+        --recursive \
         $S3_ARGS \
         --no-progress \
-        --page-size 100
+        | awk -v total="$TOTAL" '
+            /^upload:/ { n++; printf "\r    %d / %d uploaded", n, total; fflush() }
+            END { printf "\n" }
+        '
+    touch "$MARKER"
     echo "    Done: $dir"
 done
 

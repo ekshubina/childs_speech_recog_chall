@@ -22,6 +22,7 @@ usage() {
     echo "Options:"
     echo "  --config <path>    Path to YAML config (required), e.g. configs/baseline_whisper_small.yaml"
     echo "  --force-restart    Ignore existing checkpoints; start training from epoch 0"
+    echo "  --debug            Run with 100 train / 20 val samples (smoke test)"
     echo "  --help             Show this message"
     exit 1
 }
@@ -29,6 +30,7 @@ usage() {
 # ── Parse arguments ────────────────────────────────────────────────────────
 CONFIG=""
 FORCE_RESTART=0
+DEBUG=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -38,6 +40,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --force-restart)
             FORCE_RESTART=1
+            shift
+            ;;
+        --debug)
+            DEBUG=1
             shift
             ;;
         --help|-h)
@@ -141,10 +147,10 @@ SSH_OPTS="-i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no -o ConnectTimeout=15"
 SSH_TARGET="root@$POD_IP -p $POD_PORT"
 
 # ── Launch remote training via stdin ──────────────────────────────────────
-echo "Launching training on Pod (config: $CONFIG, force-restart: $FORCE_RESTART)..."
+echo "Launching training on Pod (config: $CONFIG, force-restart: $FORCE_RESTART, debug: $DEBUG)..."
 # shellcheck disable=SC2086
-CONFIG="$CONFIG" FORCE_RESTART="$FORCE_RESTART" \
-    ssh $SSH_OPTS $SSH_TARGET "CONFIG='$CONFIG' FORCE_RESTART='$FORCE_RESTART' bash -s" \
+CONFIG="$CONFIG" FORCE_RESTART="$FORCE_RESTART" DEBUG="$DEBUG" \
+    ssh $SSH_OPTS $SSH_TARGET "CONFIG='$CONFIG' FORCE_RESTART='$FORCE_RESTART' DEBUG='$DEBUG' bash -s" \
     < "$SCRIPT_DIR/remote_train.sh"
 
 # ── Stream log — Ctrl+C disconnects tail only ─────────────────────────────

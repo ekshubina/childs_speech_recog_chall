@@ -13,6 +13,7 @@ REPO=/workspace/childs_speech_recog_chall
 LOG=/workspace/logs/current.log
 CONFIG="${CONFIG:-configs/baseline_whisper_small.yaml}"
 FORCE_RESTART="${FORCE_RESTART:-0}"
+DEBUG="${DEBUG:-0}"
 BRANCH="${BRANCH:-main}"
 
 # Ensure log directory exists
@@ -70,6 +71,8 @@ REPO=$REPO
 CONFIG=$CONFIG
 RESUME_FLAG='$RESUME_FLAG'
 
+DEBUG=$DEBUG
+
 cd \$REPO
 
 # Sync latest code
@@ -86,8 +89,12 @@ fi
 source venv/bin/activate
 pip install -q -r requirements.txt
 
+# Build debug flag
+DEBUG_FLAG=""
+[[ "$DEBUG" == "1" ]] && DEBUG_FLAG="--debug"
+
 # Run training — all output appended to persistent log
-eval python scripts/train.py --config \"\$CONFIG\" \$RESUME_FLAG 2>&1 | tee -a \$LOG
+  eval python scripts/train.py --config "\$CONFIG" \$RESUME_FLAG \$DEBUG_FLAG 2>&1 | tee -a \$LOG
 TRAIN_EXIT=\${PIPESTATUS[0]}
 echo \"EXIT_CODE=\$TRAIN_EXIT\" >> \$LOG
 

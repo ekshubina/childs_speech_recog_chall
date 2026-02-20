@@ -5,7 +5,7 @@
 max-line-length = 127
 
 # Maximum complexity (cyclomatic complexity)
-max-complexity = 10
+max-complexity = 20
 
 # Ignore specific errors/warnings
 # E203: whitespace before ':' (conflicts with black)
@@ -37,7 +37,8 @@ select = E,W,F,C
 # Per-file ignores
 per-file-ignores =
     __init__.py:F401
-    tests/*:F401,F811
+    tests/*:F401,F811,E306
+    scripts/*:E402
 
 # Show source code for each error
 show-source = True

@@ -8,15 +8,10 @@ with configurations specific to Whisper fine-tuning on children's speech data.
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Dict, Any, Union
+from typing import Any, Dict, Optional, Union
 
 import torch
-from transformers import (
-    Seq2SeqTrainer,
-    Seq2SeqTrainingArguments,
-    WhisperTokenizer,
-    WhisperProcessor
-)
+from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments, WhisperProcessor
 from transformers.trainer_utils import get_last_checkpoint
 
 from src.training.metrics import compute_metrics
@@ -28,9 +23,9 @@ logger = logging.getLogger(__name__)
 class WhisperTrainingConfig:
     """
     Configuration for Whisper fine-tuning.
-    
+
     Encapsulates all training hyperparameters and settings.
-    
+
     Attributes:
         output_dir: Directory to save checkpoints and logs
         num_epochs: Number of training epochs
@@ -50,7 +45,8 @@ class WhisperTrainingConfig:
         generation_max_length: Maximum length for generated sequences
         predict_with_generate: Whether to use generation for evaluation
     """
-    output_dir: str = 'checkpoints/whisper-finetuned'
+
+    output_dir: str = "checkpoints/whisper-finetuned"
     num_epochs: int = 10
     batch_size: int = 8
     eval_batch_size: int = 8
@@ -64,7 +60,7 @@ class WhisperTrainingConfig:
     logging_steps: int = 100
     save_total_limit: int = 3
     load_best_model_at_end: bool = True
-    metric_for_best_model: str = 'wer'
+    metric_for_best_model: str = "wer"
     greater_is_better: bool = False  # Lower WER is better
     generation_max_length: int = 225
     predict_with_generate: bool = True
@@ -73,10 +69,10 @@ class WhisperTrainingConfig:
 class WhisperTrainer(Seq2SeqTrainer):
     """
     Custom trainer for Whisper fine-tuning.
-    
+
     Extends Hugging Face's Seq2SeqTrainer with Whisper-specific
     configurations and logging.
-    
+
     Attributes:
         model: Whisper model to train
         args: Training arguments
@@ -85,16 +81,16 @@ class WhisperTrainer(Seq2SeqTrainer):
         tokenizer: Whisper tokenizer/processor
         data_collator: Data collator for batching
         compute_metrics: Function to compute evaluation metrics
-    
+
     Example:
         >>> from transformers import WhisperForConditionalGeneration, WhisperProcessor
         >>> from src.data.dataset import ChildSpeechDataset
-        >>> 
+        >>>
         >>> model = WhisperForConditionalGeneration.from_pretrained('openai/whisper-medium')
         >>> processor = WhisperProcessor.from_pretrained('openai/whisper-medium')
         >>> train_ds = ChildSpeechDataset('train.jsonl', processor)
         >>> eval_ds = ChildSpeechDataset('val.jsonl', processor)
-        >>> 
+        >>>
         >>> trainer = WhisperTrainer.create_trainer(
         ...     model=model,
         ...     processor=processor,
@@ -113,11 +109,11 @@ class WhisperTrainer(Seq2SeqTrainer):
         eval_dataset,
         config: Dict[str, Any],
         data_collator=None,
-        resume_from_checkpoint: Optional[Union[str, Path]] = None
-    ) -> 'WhisperTrainer':
+        resume_from_checkpoint: Optional[Union[str, Path]] = None,
+    ) -> "WhisperTrainer":
         """
         Factory method to create configured WhisperTrainer.
-        
+
         Args:
             model: Whisper model to train
             processor: WhisperProcessor for tokenization
@@ -126,17 +122,17 @@ class WhisperTrainer(Seq2SeqTrainer):
             config: Configuration dictionary with 'training' section
             data_collator: Optional custom data collator
             resume_from_checkpoint: Path to checkpoint to resume from
-        
+
         Returns:
             Configured WhisperTrainer instance
-        
+
         Raises:
             ValueError: If config is missing required fields
         """
-        if 'training' not in config:
+        if "training" not in config:
             raise ValueError("Config must contain 'training' section")
 
-        training_config = config['training']
+        training_config = config["training"]
         model_config = config.get("model", {})
 
         # Detect device and adjust settings accordingly
@@ -144,7 +140,7 @@ class WhisperTrainer(Seq2SeqTrainer):
         use_mps = torch.backends.mps.is_available() and not use_cuda
         use_cpu = not use_cuda and not use_mps
 
-        original_batch_size = training_config.get('batch_size', 8)
+        original_batch_size = training_config.get("batch_size", 8)
         batch_size = original_batch_size
 
         if use_mps and original_batch_size > 2:
@@ -194,7 +190,7 @@ class WhisperTrainer(Seq2SeqTrainer):
         output_dir = Path(train_cfg.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"Training configuration:")
+        logger.info("Training configuration:")
         logger.info(f"  Output dir: {train_cfg.output_dir}")
         logger.info(f"  Num epochs: {train_cfg.num_epochs}")
         logger.info(f"  Batch size: {train_cfg.batch_size}")
@@ -236,9 +232,10 @@ class WhisperTrainer(Seq2SeqTrainer):
         # Use default data collator if not provided
         if data_collator is None:
             from src.data.dataset import WhisperDataCollator
+
             data_collator = WhisperDataCollator(
                 processor=processor,
-                padding='longest',
+                padding="longest",
             )
 
         # Create compute_metrics wrapper with tokenizer
@@ -276,7 +273,7 @@ class WhisperTrainer(Seq2SeqTrainer):
     def log(self, logs: Dict[str, float], start_time: Optional[float] = None) -> None:
         """
         Override log method to add custom logging.
-        
+
         Args:
             logs: Dictionary of metrics to log
             start_time: Optional start time for computing elapsed time (added in newer transformers)
@@ -288,13 +285,13 @@ class WhisperTrainer(Seq2SeqTrainer):
             super().log(logs)
 
         # Log WER prominently if present
-        if 'eval_wer' in logs:
+        if "eval_wer" in logs:
             logger.info(f">>> Validation WER: {logs['eval_wer']:.4f}")
 
     def _save_checkpoint(self, model, trial, metrics=None):
         """
         Override checkpoint saving to add custom logging.
-        
+
         Args:
             model: Model to save
             trial: Trial object (for hyperparameter search)
@@ -305,7 +302,7 @@ class WhisperTrainer(Seq2SeqTrainer):
 
         if checkpoint_folder is not None:
             logger.info(f"Checkpoint saved to: {checkpoint_folder}")
-            if metrics is not None and 'eval_wer' in metrics:
+            if metrics is not None and "eval_wer" in metrics:
                 logger.info(f"Checkpoint WER: {metrics['eval_wer']:.4f}")
 
         return checkpoint_folder
