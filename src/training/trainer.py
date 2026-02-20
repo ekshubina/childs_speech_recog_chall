@@ -230,6 +230,7 @@ class WhisperTrainer(Seq2SeqTrainer):
             save_steps=train_cfg.save_steps,
             eval_steps=train_cfg.eval_steps,
             logging_steps=train_cfg.logging_steps,
+            logging_first_step=True,
             save_total_limit=train_cfg.save_total_limit,
             load_best_model_at_end=train_cfg.load_best_model_at_end,
             metric_for_best_model=train_cfg.metric_for_best_model,
