@@ -63,6 +63,7 @@ htmlcov/
 # Environment variables
 .env
 .env.local
+.runpod.env
 
 # MacOS
 .DS_Store
