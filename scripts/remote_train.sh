@@ -119,6 +119,8 @@ DEBUG_FLAG=""
 [[ "\$DEBUG" == "1" ]] && DEBUG_FLAG="--debug"
 
 # Run training — all output appended to persistent log
+# expandable_segments avoids OOM from CUDA allocator fragmentation
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 eval python scripts/train.py --config "\$CONFIG" \$RESUME_FLAG \$DEBUG_FLAG 2>&1 | tee -a "\$LOG"
 TRAIN_EXIT=\${PIPESTATUS[0]}
 echo "EXIT_CODE=\$TRAIN_EXIT" >> "\$LOG"

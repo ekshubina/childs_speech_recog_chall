@@ -13,7 +13,7 @@ model:
   # Fine-tuning settings
   dropout: 0.1
   freeze_encoder: false  # Train both encoder and decoder
-  gradient_checkpointing: false  # Not needed on 24 GB+ VRAM; adds overhead
+  gradient_checkpointing: true  # Saves ~40% activation memory; lets us use larger batches
 
 # Data Configuration
 data:
@@ -50,8 +50,8 @@ training:
   # Apple Silicon (MPS) SUPPORTED - requires ~16GB+ unified memory for comfortable training
   # Batch size may need adjustment based on available memory
   num_epochs: 10
-  batch_size: 32  # Whisper-small fits ~32-48 on 24 GB VRAM with fp16
-  gradient_accumulation_steps: 2  # Effective batch size = 32 * 2 = 64
+  batch_size: 16  # Safe for Whisper-small on 24 GB fp16 with gradient checkpointing
+  gradient_accumulation_steps: 4  # Effective batch size = 16 * 4 = 64
   learning_rate: 1.0e-5
   warmup_steps: 500
   weight_decay: 0.01
@@ -66,8 +66,8 @@ training:
   # Evaluation
   evaluation_strategy: steps
   eval_steps: 500
-  per_device_eval_batch_size: 64  # No gradients during eval — use large batch for speed
-  eval_batch_size: 64  # Alias for per_device_eval_batch_size
+  per_device_eval_batch_size: 32  # No gradients during eval; halve relative to train for safety
+  eval_batch_size: 32  # Alias for per_device_eval_batch_size
 
   # Data loading — parallel workers are critical to keep GPU fed
   dataloader_num_workers: 8   # Use more CPU cores; default HF Trainer is 0 (serial!)
