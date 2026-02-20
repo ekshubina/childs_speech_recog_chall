@@ -94,7 +94,7 @@ if [[ -z "${POD_ID:-}" ]]; then
         --gpuType "$GPU_TYPE" \
         --secureCloud \
         --cost 0.80 \
-        --imageName "runpod/pytorch:2.6.0-py3.11-cuda12.4.1-devel-ubuntu22.04" \
+        --imageName "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04" \
         --containerDiskSize 50 \
         --networkVolumeId "$NETWORK_VOLUME_ID" \
         --volumePath /workspace \
