@@ -332,6 +332,43 @@ class TestWalkKeys:
         s3 = self._build_s3(tree)
         assert walk_keys(s3, "empty") == []
 
+    def test_include_dir_markers_appends_subdir_slash_keys(self, monkeypatch):
+        """Regression: deleted dirs leave marker objects; include_dir_markers=True collects them."""
+        monkeypatch.setenv("RUNPOD_S3_BUCKET", "mybucket")
+        tree = {
+            "ckpts": {
+                "files": [],
+                "subs": ["run1"],
+            },
+            "ckpts/run1": {
+                "files": [("ckpts/run1/config.json", 100)],
+                "subs": ["checkpoint-50"],
+            },
+            "ckpts/run1/checkpoint-50": {
+                "files": [],  # already deleted — only marker remains
+                "subs": [],
+            },
+        }
+        s3 = self._build_s3(tree)
+        result = walk_keys(s3, "ckpts", include_dir_markers=True)
+        keys = [k for k, _ in result]
+        # Real file
+        assert "ckpts/run1/config.json" in keys
+        # Dir marker keys appended for each subdir encountered
+        assert "ckpts/run1/checkpoint-50/" in keys
+        assert "ckpts/run1/" in keys
+
+    def test_include_dir_markers_false_by_default(self, monkeypatch):
+        monkeypatch.setenv("RUNPOD_S3_BUCKET", "mybucket")
+        tree = {
+            "ckpts": {"files": [], "subs": ["run1"]},
+            "ckpts/run1": {"files": [("ckpts/run1/model.pt", 1)], "subs": []},
+        }
+        s3 = self._build_s3(tree)
+        result = walk_keys(s3, "ckpts")
+        keys = [k for k, _ in result]
+        assert not any(k.endswith("/") for k in keys)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # key_exists
@@ -365,29 +402,32 @@ class TestKeyExists:
 
 @pytest.mark.unit
 class TestDeleteKeys:
-    def test_deletes_small_batch_in_one_call(self, monkeypatch, capsys):
+
+    def test_deletes_each_key_individually(self, monkeypatch, capsys):
         monkeypatch.setenv("RUNPOD_S3_BUCKET", "mybucket")
         s3 = MagicMock()
-        s3.delete_objects.return_value = {"Errors": []}
         keys = ["a/1.txt", "a/2.txt"]
         deleted = delete_keys(s3, keys)
-        s3.delete_objects.assert_called_once()
+        assert s3.delete_object.call_count == 2
         assert deleted == 2
 
-    def test_splits_into_1000_key_chunks(self, monkeypatch, capsys):
+    def test_calls_correct_bucket_and_key(self, monkeypatch, capsys):
         monkeypatch.setenv("RUNPOD_S3_BUCKET", "mybucket")
         s3 = MagicMock()
-        s3.delete_objects.return_value = {"Errors": []}
+        delete_keys(s3, ["a/1.txt"])
+        s3.delete_object.assert_called_once_with(Bucket="mybucket", Key="a/1.txt")
+
+    def test_large_set_calls_once_per_key(self, monkeypatch, capsys):
+        monkeypatch.setenv("RUNPOD_S3_BUCKET", "mybucket")
+        s3 = MagicMock()
         keys = [f"prefix/{i}" for i in range(2500)]
         delete_keys(s3, keys)
-        assert s3.delete_objects.call_count == 3  # 1000 + 1000 + 500
+        assert s3.delete_object.call_count == 2500
 
     def test_reports_errors_to_stderr(self, monkeypatch, capsys):
         monkeypatch.setenv("RUNPOD_S3_BUCKET", "mybucket")
         s3 = MagicMock()
-        s3.delete_objects.return_value = {
-            "Errors": [{"Key": "a/bad.txt", "Message": "AccessDenied"}]
-        }
+        s3.delete_object.side_effect = Exception("AccessDenied")
         delete_keys(s3, ["a/bad.txt"], label="test-label")
         err = capsys.readouterr().err
         assert "Delete error" in err
@@ -396,20 +436,22 @@ class TestDeleteKeys:
     def test_returns_count_excluding_errors(self, monkeypatch, capsys):
         monkeypatch.setenv("RUNPOD_S3_BUCKET", "mybucket")
         s3 = MagicMock()
-        s3.delete_objects.return_value = {
-            "Errors": [{"Key": "a/bad.txt", "Message": "Denied"}]
-        }
-        # 3 sent, 1 error → 2 deleted
+
+        def side_effect(Bucket, Key):
+            if Key == "a/bad.txt":
+                raise Exception("Denied")
+
+        s3.delete_object.side_effect = side_effect
         count = delete_keys(s3, ["a/1.txt", "a/2.txt", "a/bad.txt"])
         assert count == 2
 
-    def test_handles_delete_exception_gracefully(self, monkeypatch, capsys):
+    def test_handles_all_errors_gracefully(self, monkeypatch, capsys):
         monkeypatch.setenv("RUNPOD_S3_BUCKET", "mybucket")
         s3 = MagicMock()
-        s3.delete_objects.side_effect = Exception("S3 down")
+        s3.delete_object.side_effect = Exception("S3 down")
         count = delete_keys(s3, ["a/1.txt"])
         assert count == 0
-        assert "Warning" in capsys.readouterr().err
+        assert "Delete error" in capsys.readouterr().err
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -473,8 +515,10 @@ class TestCmdList:
 
         out = capsys.readouterr().out
         assert "logs" in out
-        # audio dirs are empty → should not appear
-        assert "audio_0" not in out
+        # audio dirs are shown as a static "not listed" line — never fetched
+        assert "not listed" in out
+        # managed prefixes that are empty should not appear as sized rows
+        assert ".cache/huggingface" not in out
 
     def test_prints_checkpoint_detail(self, monkeypatch, capsys):
         monkeypatch.setenv("RUNPOD_S3_BUCKET", "mybucket")
@@ -633,7 +677,7 @@ class TestCmdClean:
             with patch.object(pod_storage, "walk_keys", return_value=[("k/f", 1)]):
                 cmd_clean(s3, self._args(all_checkpoints=True, yes=False))
 
-        s3.delete_objects.assert_not_called()
+        s3.delete_object.assert_not_called()
         out = capsys.readouterr().out
         assert "Dry-run" in out
 
@@ -661,7 +705,7 @@ class TestCmdClean:
 
         to_delete = [("run1/checkpoint-10/model.pt", 1)]
 
-        def fake_walk(s3_, prefix):
+        def fake_walk(s3_, prefix, include_dir_markers=False):
             if "checkpoint-10" in prefix:
                 return to_delete
             return []
@@ -686,7 +730,7 @@ class TestCmdClean:
                 return ["checkpoint-10", "checkpoint-20", "checkpoint-50"]
             return []
 
-        def fake_walk(s3_, prefix):
+        def fake_walk(s3_, prefix, include_dir_markers=False):
             return [("k/f", 10)]
 
         plan_keys = []
@@ -701,8 +745,10 @@ class TestCmdClean:
                     with patch("builtins.input", return_value="y"):
                         cmd_clean(s3, self._args(old_checkpoints=True, yes=True))
 
-        # checkpoint-10 and checkpoint-20 should be queued; checkpoint-50 (latest) kept
-        assert len(plan_keys) == 2
+        # checkpoint-10 and checkpoint-20 are deleted; checkpoint-50 (latest) kept.
+        # Each plan entry holds 1 real file + 1 dir marker → 4 total keys across 2 calls.
+        real_keys = [k for k in plan_keys if not k.endswith("/")]
+        assert len(real_keys) == 2
 
     # ── all-checkpoints ───────────────────────────────────────────────────────
 
@@ -713,13 +759,16 @@ class TestCmdClean:
 
         with patch.object(pod_storage, "list_subdirs", return_value=["run1"]):
             with patch.object(pod_storage, "walk_keys", return_value=all_objs):
-                with patch.object(pod_storage, "delete_keys", return_value=2) as mock_del:
+                with patch.object(pod_storage, "delete_keys", return_value=3) as mock_del:
                     with patch("builtins.input", return_value="y"):
                         cmd_clean(s3, self._args(all_checkpoints=True, yes=True))
 
         mock_del.assert_called_once()
         deleted_keys = mock_del.call_args[0][1]
-        assert len(deleted_keys) == 2
+        # 2 real files + 1 run-level directory marker
+        assert len(deleted_keys) == 3
+        real_keys = [k for k in deleted_keys if not k.endswith("/")]
+        assert len(real_keys) == 2
 
     # ── hf-cache ──────────────────────────────────────────────────────────────
 
@@ -800,7 +849,7 @@ class TestCmdClean:
             with patch.object(pod_storage, "walk_keys", return_value=[("k", 1)]):
                 with patch("builtins.input", return_value="n"):
                     cmd_clean(s3, self._args(all_checkpoints=True, yes=True))
-        s3.delete_objects.assert_not_called()
+        s3.delete_object.assert_not_called()
         out = capsys.readouterr().out
         assert "Aborted" in out
 
@@ -811,4 +860,4 @@ class TestCmdClean:
             with patch.object(pod_storage, "walk_keys", return_value=[("k", 1)]):
                 with patch("builtins.input", return_value=""):
                     cmd_clean(s3, self._args(all_checkpoints=True, yes=True))
-        s3.delete_objects.assert_not_called()
+        s3.delete_object.assert_not_called()

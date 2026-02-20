@@ -102,6 +102,19 @@ BRANCH=$BRANCH
 POD_ID=${POD_ID:-}
 RUNPOD_API_KEY=${RUNPOD_API_KEY:-}
 
+# Always stop the Pod on exit (success, error, or signal) to prevent runaway billing
+_stop_pod() {
+    local exit_code=\$?
+    echo "EXIT_CODE=\$exit_code — stopping Pod..." | tee -a "\$LOG"
+    if [[ -n "\$RUNPOD_API_KEY" && -n "\$POD_ID" ]]; then
+        runpodctl config --apiKey "\$RUNPOD_API_KEY" &>/dev/null || true
+        runpodctl stop pod "\$POD_ID" || true
+    else
+        echo 'WARNING: RUNPOD_API_KEY or POD_ID not set — pod will not auto-stop.' | tee -a "\$LOG"
+    fi
+}
+trap _stop_pod EXIT
+
 cd "\$REPO"
 
 # Sync latest code
@@ -123,16 +136,7 @@ DEBUG_FLAG=""
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 eval python scripts/train.py --config "\$CONFIG" \$RESUME_FLAG \$DEBUG_FLAG 2>&1 | tee -a "\$LOG"
 TRAIN_EXIT=\${PIPESTATUS[0]}
-echo "EXIT_CODE=\$TRAIN_EXIT" >> "\$LOG"
-
-# Self-stop Pod — GPU billing ends immediately
-echo 'Training complete. Stopping Pod...' | tee -a "\$LOG"
-if [[ -n "\$RUNPOD_API_KEY" && -n "\$POD_ID" ]]; then
-    runpodctl config --apiKey "\$RUNPOD_API_KEY" &>/dev/null || true
-    runpodctl stop pod "\$POD_ID"
-else
-    echo 'WARNING: RUNPOD_API_KEY or POD_ID not set — pod will not auto-stop.' | tee -a "\$LOG"
-fi
+echo "Training script finished with exit code \$TRAIN_EXIT" | tee -a "\$LOG"
 SCRIPT
 chmod +x "$TRAIN_SCRIPT"
 

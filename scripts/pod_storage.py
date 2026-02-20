@@ -72,6 +72,7 @@ def load_env():
 def make_client():
     try:
         import boto3
+        from botocore.config import Config
     except ImportError:
         sys.exit(
             "Error: boto3 not installed.\n"
@@ -83,6 +84,12 @@ def make_client():
         endpoint_url=os.environ["RUNPOD_S3_ENDPOINT"],
         aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
         aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        config=Config(
+            connect_timeout=10,
+            read_timeout=120,
+            retries={"max_attempts": 1},
+            s3={"addressing_style": "path"},  # RunPod S3 requires path-style; virtual-hosted → 307
+        ),
     )
 
 
@@ -136,15 +143,24 @@ def list_files_shallow(s3, prefix: str) -> list[tuple[str, int]]:
         return []
 
 
-def walk_keys(s3, prefix: str) -> list[tuple[str, int]]:
+def walk_keys(s3, prefix: str, include_dir_markers: bool = False) -> list[tuple[str, int]]:
     """
     Recursively collect all (key, size) pairs under prefix/ by walking the
     tree with shallow listings only.  Never triggers pagination.
+
+    include_dir_markers: also append the virtual-directory marker objects
+    (keys ending in '/') that S3 stores to represent empty directories.
+    These appear as CommonPrefixes, not Contents, so list_files_shallow misses
+    them.  Pass True when building a deletion plan so markers are removed too.
+    delete_object on a non-existent key is a safe no-op on S3-compatible stores.
     """
     results: list[tuple[str, int]] = []
     results.extend(list_files_shallow(s3, prefix))
     for sub in list_subdirs(s3, prefix):
-        results.extend(walk_keys(s3, f"{prefix.rstrip('/')}/{sub}"))
+        sub_prefix = f"{prefix.rstrip('/')}/{sub}"
+        results.extend(walk_keys(s3, sub_prefix, include_dir_markers=include_dir_markers))
+        if include_dir_markers:
+            results.append((sub_prefix + "/", 0))
     return results
 
 
@@ -160,21 +176,20 @@ def key_exists(s3, key: str) -> int | None:
 # ── Batch delete ──────────────────────────────────────────────────────────────
 
 def delete_keys(s3, keys: list[str], label: str = "") -> int:
-    """Delete keys in batches of 1000. Returns number of deleted objects."""
+    """
+    Delete keys one at a time via delete_object (singular DELETE requests).
+
+    RunPod's S3 returns 307 Temporary Redirect on DeleteObjects (the batch
+    POST endpoint), so we avoid it entirely and fall back to individual calls.
+    This is slightly slower but universally compatible with S3-compatible stores.
+    """
     total = 0
-    for i in range(0, len(keys), 1000):
-        batch = [{"Key": k} for k in keys[i: i + 1000]]
+    for key in keys:
         try:
-            resp = s3.delete_objects(
-                Bucket=_bucket(),
-                Delete={"Objects": batch, "Quiet": True},
-            )
-            errors = resp.get("Errors", [])
-            for e in errors:
-                print(f"  Delete error: {e['Key']}: {e['Message']}", file=sys.stderr)
-            total += len(batch) - len(errors)
+            s3.delete_object(Bucket=_bucket(), Key=key)
+            total += 1
         except Exception as e:
-            print(f"  Warning: delete_objects failed: {e}", file=sys.stderr)
+            print(f"  Delete error: {key}: {e}", file=sys.stderr)
     tag = f" from {label}" if label else ""
     print(f"  Deleted {total} objects{tag}.")
     return total
@@ -199,14 +214,15 @@ def cmd_list(s3, _args) -> None:
     print(f"{'Prefix':<58}  {'Size':>10}  {'Files':>7}")
     print("─" * 80)
 
-    top_prefixes = [
-        ("data/audio_0",                          "audio_0 (training data)"),
-        ("data/audio_1",                          "audio_1 (training data)"),
-        ("data/audio_2",                          "audio_2 (training data)"),
+    # data/audio_* hold 30 K+ flat FLAC files — listing times out on RunPod S3.
+    # They are immutable training data; just show a static note.
+    print(f"{'data/audio_{0,1,2}  (training data — not listed)':<58}  {'~95K files':>10}")
+
+    managed_prefixes = [
         ("childs_speech_recog_chall/checkpoints", "checkpoints"),
-        (".cache/huggingface",                    ".cache/huggingface (HF models)"),
-        ("logs",                                  "logs"),
-        ("childs_speech_recog_chall/.git",        "repo .git"),
+        (".cache/huggingface", ".cache/huggingface (HF models)"),
+        ("logs", "logs"),
+        ("childs_speech_recog_chall/.git", "repo .git"),
     ]
 
     results: dict[str, tuple[int, int]] = {}
@@ -215,13 +231,13 @@ def cmd_list(s3, _args) -> None:
         objs = walk_keys(s3, prefix)
         results[prefix] = (sum(sz for _, sz in objs), len(objs))
 
-    threads = [threading.Thread(target=fetch, args=(p, l)) for p, l in top_prefixes]
+    threads = [threading.Thread(target=fetch, args=(p, l)) for p, l in managed_prefixes]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
 
-    for prefix, label in top_prefixes:
+    for prefix, label in managed_prefixes:
         b, n = results.get(prefix, (0, 0))
         if n > 0:
             print(f"{label:<58}  {human_size(b):>10}  {n:>7}")
@@ -330,10 +346,13 @@ def cmd_clean(s3, args) -> None:
             subs = list_subdirs(s3, f"{ckpt_root}/{run}")
 
             if args.all_checkpoints:
-                objs = walk_keys(s3, f"{ckpt_root}/{run}")
+                objs = walk_keys(s3, f"{ckpt_root}/{run}", include_dir_markers=True)
                 total_b = sum(sz for _, sz in objs)
                 keys = [k for k, _ in objs]
-                print(f"  Will delete: {run}/  ({human_size(total_b)}, {len(keys)} objects)")
+                # Also include the run-level marker itself
+                keys.append(f"{ckpt_root}/{run}/")
+                real_count = sum(1 for k in keys if not k.endswith("/"))
+                print(f"  Will delete: {run}/  ({human_size(total_b)}, {real_count} files + markers)")
                 if keys:
                     plan.append((keys, f"{run}/"))
             else:
@@ -350,17 +369,19 @@ def cmd_clean(s3, args) -> None:
                     if sub == latest:
                         print(f"  Keeping:  {run}/{sub}/  (latest checkpoint, used for resume)")
                         continue
-                    objs = walk_keys(s3, f"{ckpt_root}/{run}/{sub}")
+                    objs = walk_keys(s3, f"{ckpt_root}/{run}/{sub}", include_dir_markers=True)
                     total_b = sum(sz for _, sz in objs)
                     keys = [k for k, _ in objs]
-                    print(f"  Will delete: {run}/{sub}/  ({human_size(total_b)}, {len(keys)} objects)")
+                    keys.append(f"{ckpt_root}/{run}/{sub}/")  # sub-level marker
+                    real_count = sum(1 for k in keys if not k.endswith("/"))
+                    print(f"  Will delete: {run}/{sub}/  ({human_size(total_b)}, {real_count} files + markers)")
                     if keys:
                         plan.append((keys, f"{run}/{sub}/"))
 
     # ── HuggingFace cache ─────────────────────────────────────────────────────
     if args.hf_cache:
         print("\n── HuggingFace cache ────────────────────────────────────────────")
-        objs = walk_keys(s3, ".cache/huggingface")
+        objs = walk_keys(s3, ".cache/huggingface", include_dir_markers=True)
         if not objs:
             print("  .cache/huggingface/ is empty — nothing to delete.")
         else:
@@ -373,7 +394,7 @@ def cmd_clean(s3, args) -> None:
     # ── Python cache ──────────────────────────────────────────────────────────
     if args.pycache:
         print("\n── Python cache ─────────────────────────────────────────────────")
-        objs = walk_keys(s3, "childs_speech_recog_chall")
+        objs = walk_keys(s3, "childs_speech_recog_chall", include_dir_markers=False)
         py_keys = [k for k, _ in objs if "__pycache__" in k or k.endswith(".pyc")]
         if not py_keys:
             print("  No Python cache files found.")
@@ -475,4 +496,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
