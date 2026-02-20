@@ -50,8 +50,8 @@ training:
   # Apple Silicon (MPS) SUPPORTED - requires ~16GB+ unified memory for comfortable training
   # Batch size may need adjustment based on available memory
   num_epochs: 10
-  batch_size: 16  # Safe for Whisper-small on 24 GB fp16 with gradient checkpointing
-  gradient_accumulation_steps: 4  # Effective batch size = 16 * 4 = 64
+  batch_size: 48  # Debug run showed only 6.35 GB / 25.28 GB used; tripling from 16 keeps ~15 GB peak with margin
+  gradient_accumulation_steps: 2  # Effective batch size = 48 * 2 = 96
   learning_rate: 1.0e-5
   warmup_steps: 500
   weight_decay: 0.01
@@ -66,8 +66,8 @@ training:
   # Evaluation
   evaluation_strategy: steps
   eval_steps: 500
-  per_device_eval_batch_size: 32  # No gradients during eval; halve relative to train for safety
-  eval_batch_size: 32  # Alias for per_device_eval_batch_size
+  per_device_eval_batch_size: 96  # No gradients during eval; can match or exceed train batch size
+  eval_batch_size: 96  # Alias for per_device_eval_batch_size
 
   # Data loading — parallel workers are critical to keep GPU fed
   dataloader_num_workers: 8   # Use more CPU cores; default HF Trainer is 0 (serial!)
