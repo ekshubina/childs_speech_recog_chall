@@ -36,6 +36,18 @@ if [[ ! -d "$REPO/.git" ]]; then
     git clone https://github.com/ekshubina/childs_speech_recog_chall.git "$REPO"
 fi
 
+# Symlink /workspace/data → repo's data/ so config paths resolve correctly.
+# Data is uploaded to the network volume at /workspace/data/ via pod_sync_data.sh.
+if [[ ! -L "$REPO/data" ]]; then
+    if [[ -d /workspace/data ]]; then
+        ln -sfn /workspace/data "$REPO/data"
+        echo "Linked $REPO/data → /workspace/data" | tee -a "$LOG"
+    else
+        echo "ERROR: /workspace/data not found. Run ./scripts/pod_sync_data.sh first to upload training data." | tee -a "$LOG"
+        exit 1
+    fi
+fi
+
 # Derive OUTPUT_DIR from the YAML config — avoids hardcoding the run name
 # Expects a line like:  output_dir: checkpoints/baseline_whisper_small
 OUTPUT_DIR_REL=$(grep 'output_dir' "$REPO/$CONFIG" | head -1 | sed 's/.*output_dir[[:space:]]*:[[:space:]]*//')
