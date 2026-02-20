@@ -201,6 +201,19 @@ class WhisperTrainer(Seq2SeqTrainer):
         logger.info(f"  Gradient checkpointing: {gradient_checkpointing}")
         logger.info(f"  Device: {'CUDA' if use_cuda else 'MPS' if use_mps else 'CPU'}")
 
+        # Data loading settings — critical for GPU utilisation
+        # Default HuggingFace Trainer uses 0 workers (serial), which starves the GPU
+        dataloader_num_workers = training_config.get("dataloader_num_workers", 4)
+        dataloader_pin_memory = training_config.get("dataloader_pin_memory", True) and use_cuda
+        # prefetch_factor requires num_workers > 0
+        dataloader_prefetch_factor = (
+            training_config.get("dataloader_prefetch_factor", 4) if dataloader_num_workers > 0 else None
+        )
+
+        logger.info(f"  Dataloader workers: {dataloader_num_workers}")
+        logger.info(f"  Dataloader pin_memory: {dataloader_pin_memory}")
+        logger.info(f"  Dataloader prefetch_factor: {dataloader_prefetch_factor}")
+
         # Create training arguments
         training_args = Seq2SeqTrainingArguments(
             output_dir=train_cfg.output_dir,
@@ -227,6 +240,10 @@ class WhisperTrainer(Seq2SeqTrainer):
             label_names=["labels"],  # Specify label column name
             push_to_hub=False,
             report_to=["tensorboard"],
+            # Data loading — parallel workers eliminate serial CPU bottleneck
+            dataloader_num_workers=dataloader_num_workers,
+            dataloader_pin_memory=dataloader_pin_memory,
+            dataloader_prefetch_factor=dataloader_prefetch_factor,
         )
 
         # Use default data collator if not provided
