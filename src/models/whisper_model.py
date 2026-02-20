@@ -40,7 +40,7 @@ class WhisperModel(BaseASRModel):
         >>> transcription = model.transcribe('audio.flac')
         >>> model.save('checkpoints/finetuned_model')
     """
-    
+
     def __init__(self, variant: str = 'small', device: Optional[str] = None):
         """
         Initialize WhisperModel.
@@ -53,28 +53,23 @@ class WhisperModel(BaseASRModel):
                    otherwise 'cpu'
         """
         self.variant = variant
-        
+
         # Auto-detect device if not specified
         if device is None:
             if torch.cuda.is_available():
                 device = 'cuda'
             elif torch.backends.mps.is_available():
-                # MPS cannot train Whisper models due to memory constraints
-                logger.warning(
-                    "MPS backend detected but not recommended for Whisper training. "
-                    "Model requires ~8GB+ memory but MPS limit is ~9GB, leaving no room for gradients. "
-                    "Forcing CPU for training stability."
-                )
-                device = 'cpu'
+                device = "mps"
+                logger.info("Using MPS (Apple Silicon GPU) for training")
             else:
                 device = 'cpu'
-        
+
         self.device = device
         self.model: Optional[WhisperForConditionalGeneration] = None
         self.processor: Optional[WhisperProcessor] = None
-        
+
         logger.info(f"Initialized WhisperModel with variant='{variant}', device='{device}'")
-    
+
     def load(self, checkpoint_path: Optional[Union[str, Path]] = None) -> None:
         """
         Load Whisper model from checkpoint or pretrained weights.
@@ -92,10 +87,10 @@ class WhisperModel(BaseASRModel):
         """
         if checkpoint_path is None:
             checkpoint_path = f'openai/whisper-{self.variant}'
-        
+
         checkpoint_path = str(checkpoint_path)
         logger.info(f"Loading Whisper model from: {checkpoint_path}")
-        
+
         try:
             # Load processor (feature extractor + tokenizer)
             self.processor = WhisperProcessor.from_pretrained(
@@ -103,38 +98,38 @@ class WhisperModel(BaseASRModel):
                 language='english',
                 task='transcribe'
             )
-            
+
             # Load model
             self.model = WhisperForConditionalGeneration.from_pretrained(
                 checkpoint_path
             )
-            
+
             # Configure for English transcription
             # Setting forced_decoder_ids=None allows the model to predict language
             # but we'll set language in generation config instead
             self.model.config.forced_decoder_ids = None
-            
+
             # Ensure suppress_tokens is not in config (transformers requirement)
             if hasattr(self.model.config, 'suppress_tokens'):
                 delattr(self.model.config, 'suppress_tokens')
-            
+
             # Set suppress_tokens in generation_config where it belongs
             self.model.generation_config.suppress_tokens = []
-            
+
             # Set language to English in generation config
             self.model.generation_config.language = 'english'
             self.model.generation_config.task = 'transcribe'
-            
+
             # Move model to device
             self.model.to(self.device)
-            
+
             logger.info(f"Successfully loaded Whisper model on {self.device}")
             logger.info(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
-            
+
         except Exception as e:
             logger.error(f"Failed to load model from {checkpoint_path}: {e}")
             raise RuntimeError(f"Model loading failed: {e}") from e
-    
+
     def transcribe(
         self, 
         audio_paths: Union[str, Path, List[Union[str, Path]]],
@@ -162,28 +157,28 @@ class WhisperModel(BaseASRModel):
         """
         if self.model is None or self.processor is None:
             raise RuntimeError("Model not loaded. Call load() first.")
-        
+
         # Handle single file vs batch
         single_input = isinstance(audio_paths, (str, Path))
         if single_input:
             audio_paths = [audio_paths]
-        
+
         # Convert to list of Path objects
         audio_paths = [Path(p) for p in audio_paths]
-        
+
         # Verify all files exist
         for audio_path in audio_paths:
             if not audio_path.exists():
                 raise FileNotFoundError(f"Audio file not found: {audio_path}")
-        
+
         logger.info(f"Transcribing {len(audio_paths)} audio file(s)")
-        
+
         transcriptions = []
-        
+
         # Process in batches
         for i in range(0, len(audio_paths), batch_size):
             batch_paths = audio_paths[i:i + batch_size]
-            
+
             try:
                 # Load and process audio
                 import librosa
@@ -191,7 +186,7 @@ class WhisperModel(BaseASRModel):
                 for path in batch_paths:
                     audio, sr = librosa.load(str(path), sr=16000, mono=True)
                     batch_audio.append(audio)
-                
+
                 # Process with WhisperProcessor
                 inputs = self.processor(
                     batch_audio,
@@ -199,10 +194,10 @@ class WhisperModel(BaseASRModel):
                     return_tensors='pt',
                     padding=True
                 )
-                
+
                 # Move to device
                 inputs = {k: v.to(self.device) for k, v in inputs.items()}
-                
+
                 # Generate transcriptions
                 with torch.no_grad():
                     generated_ids = self.model.generate(
@@ -211,26 +206,26 @@ class WhisperModel(BaseASRModel):
                         task=task,
                         **kwargs
                     )
-                
+
                 # Decode transcriptions
                 batch_transcriptions = self.processor.batch_decode(
                     generated_ids,
                     skip_special_tokens=True
                 )
-                
+
                 transcriptions.extend(batch_transcriptions)
-                
+
                 logger.debug(f"Processed batch {i//batch_size + 1}/{(len(audio_paths) + batch_size - 1)//batch_size}")
-                
+
             except Exception as e:
                 logger.error(f"Transcription failed for batch starting at index {i}: {e}")
                 raise RuntimeError(f"Transcription failed: {e}") from e
-        
+
         # Return single string if single input, else list
         if single_input:
             return transcriptions[0]
         return transcriptions
-    
+
     def save(self, path: Union[str, Path]) -> None:
         """
         Save model checkpoint to disk.
@@ -246,23 +241,23 @@ class WhisperModel(BaseASRModel):
         """
         if self.model is None or self.processor is None:
             raise RuntimeError("Model not loaded. Cannot save.")
-        
+
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
-        
+
         logger.info(f"Saving model to: {path}")
-        
+
         try:
             # Save model and processor
             self.model.save_pretrained(str(path))
             self.processor.save_pretrained(str(path))
-            
+
             logger.info(f"Successfully saved model to {path}")
-            
+
         except Exception as e:
             logger.error(f"Failed to save model: {e}")
             raise OSError(f"Model saving failed: {e}") from e
-    
+
     def get_model_info(self) -> Dict[str, Any]:
         """
         Get model metadata and configuration.
@@ -279,7 +274,7 @@ class WhisperModel(BaseASRModel):
             'language': 'english',
             'task': 'transcribe'
         }
-        
+
         if self.model is not None:
             info['parameters'] = sum(p.numel() for p in self.model.parameters())
             info['trainable_parameters'] = sum(
@@ -288,7 +283,7 @@ class WhisperModel(BaseASRModel):
             info['model_loaded'] = True
         else:
             info['model_loaded'] = False
-        
+
         return info
 
 
@@ -321,35 +316,38 @@ def prepare_model_for_finetuning(
         >>> # Now ready for training
     """
     logger.info("Preparing model for fine-tuning")
-    
+
     # Set language and task
     model.config.forced_decoder_ids = None
-    
+
     # Ensure suppress_tokens is not in config (transformers requirement)
     if hasattr(model.config, 'suppress_tokens'):
         delattr(model.config, 'suppress_tokens')
-    
+
     # Set suppress_tokens in generation_config where it belongs
     model.generation_config.suppress_tokens = []
     model.generation_config.language = language
     model.generation_config.task = task
-    
+
+    # Disable use_cache - incompatible with gradient checkpointing and not needed during training
+    model.config.use_cache = False
+
     # Set dropout
     model.config.dropout = dropout
     model.config.attention_dropout = dropout
     model.config.activation_dropout = dropout
-    
+
     # Optionally freeze encoder
     if freeze_encoder:
         logger.info("Freezing encoder weights")
         for param in model.model.encoder.parameters():
             param.requires_grad = False
-        
+
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         total_params = sum(p.numel() for p in model.parameters())
         logger.info(f"Trainable parameters: {trainable_params:,} / {total_params:,} "
                    f"({100 * trainable_params / total_params:.2f}%)")
     else:
         logger.info("Training full model (encoder + decoder)")
-    
+
     return model

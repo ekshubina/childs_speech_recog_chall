@@ -58,6 +58,7 @@ class WhisperTrainingConfig:
     warmup_steps: int = 500
     gradient_accumulation_steps: int = 4
     fp16: bool = True
+    gradient_checkpointing: bool = False
     save_steps: int = 1000
     eval_steps: int = 1000
     logging_steps: int = 100
@@ -103,7 +104,7 @@ class WhisperTrainer(Seq2SeqTrainer):
         ... )
         >>> trainer.train()
     """
-    
+
     @staticmethod
     def create_trainer(
         model,
@@ -134,48 +135,65 @@ class WhisperTrainer(Seq2SeqTrainer):
         """
         if 'training' not in config:
             raise ValueError("Config must contain 'training' section")
-        
+
         training_config = config['training']
-        
-        # Detect if we're on CPU and adjust batch size if needed
-        is_cpu = not torch.cuda.is_available()
+        model_config = config.get("model", {})
+
+        # Detect device and adjust settings accordingly
+        use_cuda = torch.cuda.is_available()
+        use_mps = torch.backends.mps.is_available() and not use_cuda
+        use_cpu = not use_cuda and not use_mps
+
         original_batch_size = training_config.get('batch_size', 8)
         batch_size = original_batch_size
-        
-        if is_cpu and original_batch_size > 4:
+
+        if use_mps and original_batch_size > 2:
+            batch_size = 2  # MPS has limited memory - keep batch small, rely on grad accumulation
+            logger.warning(
+                f"MPS device detected. Reducing batch_size from {original_batch_size} to {batch_size} "
+                f"to fit within MPS memory limits. Gradient accumulation compensates for smaller batch."
+            )
+        elif use_cpu and original_batch_size > 4:
             batch_size = 4  # Reduce batch size for CPU training
             logger.warning(
                 f"CPU training detected. Reducing batch_size from {original_batch_size} to {batch_size} "
                 f"to accommodate CPU memory constraints."
             )
-        
+
+        # Read gradient_checkpointing from model config (saves ~40% activation memory)
+        gradient_checkpointing = model_config.get("gradient_checkpointing", use_mps)
+
         # Create training config
         train_cfg = WhisperTrainingConfig(
-            output_dir=training_config.get('output_dir', 'checkpoints/whisper-finetuned'),
-            num_epochs=training_config.get('num_epochs', 10),
+            output_dir=training_config.get("output_dir", "checkpoints/whisper-finetuned"),
+            num_epochs=training_config.get("num_epochs", 10),
             batch_size=batch_size,
-            eval_batch_size=training_config.get('eval_batch_size', 8),
-            learning_rate=training_config.get('learning_rate', 1e-5),
-            warmup_steps=training_config.get('warmup_steps', 500),
-            gradient_accumulation_steps=training_config.get('gradient_accumulation_steps', 4),
-            fp16=training_config.get('fp16', True) and torch.cuda.is_available(),  # Only enable fp16 with CUDA
-            save_steps=training_config.get('save_steps', 1000),
-            eval_steps=training_config.get('eval_steps', 1000),
-            logging_steps=training_config.get('logging_steps', 100),
-            save_total_limit=training_config.get('save_total_limit', 3),
+            eval_batch_size=training_config.get("eval_batch_size", 8),
+            learning_rate=training_config.get("learning_rate", 1e-5),
+            warmup_steps=training_config.get("warmup_steps", 500),
+            gradient_accumulation_steps=training_config.get("gradient_accumulation_steps", 4),
+            fp16=training_config.get("fp16", True) and use_cuda,  # Only enable fp16 with CUDA (MPS uses bfloat16/fp32)
+            gradient_checkpointing=gradient_checkpointing,
+            save_steps=training_config.get("save_steps", 1000),
+            eval_steps=training_config.get("eval_steps", 1000),
+            logging_steps=training_config.get("logging_steps", 100),
+            save_total_limit=training_config.get("save_total_limit", 3),
         )
-        
-        # Log warning if fp16 requested but CUDA not available
-        if training_config.get('fp16', False) and not torch.cuda.is_available():
-            logger.warning(
-                "fp16=true in config but CUDA not available. "
-                "Disabling fp16 (only supported on CUDA). Training will use fp32."
-            )
-        
+
+        # Log warning if fp16 requested but not on CUDA
+        if training_config.get("fp16", False) and not use_cuda:
+            if use_mps:
+                logger.info("fp16=true in config but running on MPS - using fp32 instead.")
+            else:
+                logger.warning("fp16=true in config but CUDA not available. Disabling fp16. Training will use fp32.")
+
+        if gradient_checkpointing:
+            logger.info("Gradient checkpointing enabled (reduces memory ~40%, slightly slower)")
+
         # Create output directory
         output_dir = Path(train_cfg.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         logger.info(f"Training configuration:")
         logger.info(f"  Output dir: {train_cfg.output_dir}")
         logger.info(f"  Num epochs: {train_cfg.num_epochs}")
@@ -184,7 +202,9 @@ class WhisperTrainer(Seq2SeqTrainer):
         logger.info(f"  Effective batch size: {train_cfg.batch_size * train_cfg.gradient_accumulation_steps}")
         logger.info(f"  Learning rate: {train_cfg.learning_rate}")
         logger.info(f"  FP16: {train_cfg.fp16}")
-        
+        logger.info(f"  Gradient checkpointing: {gradient_checkpointing}")
+        logger.info(f"  Device: {'CUDA' if use_cuda else 'MPS' if use_mps else 'CPU'}")
+
         # Create training arguments
         training_args = Seq2SeqTrainingArguments(
             output_dir=train_cfg.output_dir,
@@ -195,8 +215,9 @@ class WhisperTrainer(Seq2SeqTrainer):
             warmup_steps=train_cfg.warmup_steps,
             gradient_accumulation_steps=train_cfg.gradient_accumulation_steps,
             fp16=train_cfg.fp16,
-            eval_strategy='steps',
-            save_strategy='steps',
+            gradient_checkpointing=train_cfg.gradient_checkpointing,
+            eval_strategy="steps",
+            save_strategy="steps",
             save_steps=train_cfg.save_steps,
             eval_steps=train_cfg.eval_steps,
             logging_steps=train_cfg.logging_steps,
@@ -207,11 +228,11 @@ class WhisperTrainer(Seq2SeqTrainer):
             generation_max_length=train_cfg.generation_max_length,
             predict_with_generate=train_cfg.predict_with_generate,
             remove_unused_columns=False,  # Keep all columns for custom processing
-            label_names=['labels'],  # Specify label column name
+            label_names=["labels"],  # Specify label column name
             push_to_hub=False,
-            report_to=['tensorboard'],
+            report_to=["tensorboard"],
         )
-        
+
         # Use default data collator if not provided
         if data_collator is None:
             from src.data.dataset import WhisperDataCollator
@@ -219,11 +240,11 @@ class WhisperTrainer(Seq2SeqTrainer):
                 processor=processor,
                 padding='longest',
             )
-        
+
         # Create compute_metrics wrapper with tokenizer
         def compute_metrics_with_tokenizer(pred):
             return compute_metrics(pred, tokenizer=processor.tokenizer)
-        
+
         # Handle checkpoint resumption
         checkpoint = None
         if resume_from_checkpoint is not None:
@@ -235,7 +256,7 @@ class WhisperTrainer(Seq2SeqTrainer):
             if last_checkpoint is not None:
                 logger.info(f"Found existing checkpoint: {last_checkpoint}")
                 logger.info("Use resume_from_checkpoint parameter to resume training")
-        
+
         # Create trainer
         trainer = WhisperTrainer(
             model=model,
@@ -245,13 +266,13 @@ class WhisperTrainer(Seq2SeqTrainer):
             data_collator=data_collator,
             compute_metrics=compute_metrics_with_tokenizer,
         )
-        
+
         logger.info("WhisperTrainer created successfully")
         logger.info(f"Training samples: {len(train_dataset):,}")
         logger.info(f"Validation samples: {len(eval_dataset):,}")
-        
+
         return trainer
-    
+
     def log(self, logs: Dict[str, float], start_time: Optional[float] = None) -> None:
         """
         Override log method to add custom logging.
@@ -265,11 +286,11 @@ class WhisperTrainer(Seq2SeqTrainer):
             super().log(logs, start_time)
         else:
             super().log(logs)
-        
+
         # Log WER prominently if present
         if 'eval_wer' in logs:
             logger.info(f">>> Validation WER: {logs['eval_wer']:.4f}")
-    
+
     def _save_checkpoint(self, model, trial, metrics=None):
         """
         Override checkpoint saving to add custom logging.
@@ -281,10 +302,10 @@ class WhisperTrainer(Seq2SeqTrainer):
         """
         # Call parent without metrics argument for compatibility
         checkpoint_folder = super()._save_checkpoint(model, trial)
-        
+
         if checkpoint_folder is not None:
             logger.info(f"Checkpoint saved to: {checkpoint_folder}")
             if metrics is not None and 'eval_wer' in metrics:
                 logger.info(f"Checkpoint WER: {metrics['eval_wer']:.4f}")
-        
+
         return checkpoint_folder
