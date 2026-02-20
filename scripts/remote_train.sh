@@ -19,6 +19,17 @@ BRANCH="${BRANCH:-main}"
 # Ensure log directory exists
 mkdir -p /workspace/logs
 
+# Ensure essential tools are installed
+if ! command -v tmux &>/dev/null; then
+    echo "Installing tmux..." | tee -a "$LOG"
+    apt-get update -qq && apt-get install -y -qq tmux
+fi
+if ! command -v runpodctl &>/dev/null; then
+    echo "Installing runpodctl..." | tee -a "$LOG"
+    wget -q https://github.com/runpod/runpodctl/releases/latest/download/runpodctl-linux-amd64 -O /usr/local/bin/runpodctl
+    chmod +x /usr/local/bin/runpodctl
+fi
+
 # Clone repo on first run if it doesn't exist yet
 if [[ ! -d "$REPO/.git" ]]; then
     echo "Cloning repo to $REPO..." | tee -a "$LOG"

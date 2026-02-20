@@ -69,8 +69,12 @@ fi
 
 # shellcheck disable=SC1090
 source "$ENV_FILE"
+# Strip any surrounding quotes from POD_ID (runpodctl sometimes includes them)
+POD_ID="${POD_ID//\"/}"
 
 SSH_KEY_PATH="${SSH_KEY_PATH:-~/.ssh/id_ed25519}"
+# Expand tilde manually so it works inside variables
+SSH_KEY_PATH="${SSH_KEY_PATH/#\~/$HOME}"
 GPU_TYPE="${GPU_TYPE:-NVIDIA GeForce RTX 4090}"
 
 if [[ -z "${RUNPOD_API_KEY:-}" ]]; then
@@ -85,23 +89,30 @@ fi
 # ── Create or resume Pod ───────────────────────────────────────────────────
 if [[ -z "${POD_ID:-}" ]]; then
     echo "No POD_ID set — creating a new Pod..."
-    # Note: --cost flag may need to be --bidPerGpu on some runpodctl versions.
-    # Run 'runpodctl create pod --help' to confirm the correct flag name.
-    POD_ID=$(runpodctl create pod \
+    CREATE_OUTPUT=$(runpodctl create pod \
         --name "whisper-training" \
         --gpuType "$GPU_TYPE" \
-        --communityCloud \
-        --cost 0.50 \
-        --imageName "runpod/pytorch:1.0.3-cu1290-torch291-ubuntu2204" \
+        --secureCloud \
+        --cost 0.80 \
+        --imageName "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04" \
         --containerDiskSize 50 \
         --networkVolumeId "$NETWORK_VOLUME_ID" \
+        --startSSH \
         --ports "22/tcp" \
         --env "HF_HOME=/workspace/.cache/huggingface" \
         --env "PYTHONPATH=/workspace/childs_speech_recog_chall" \
-        2>&1 | grep -oP '(?<=pod )\S+' | head -1)
+        2>&1) || true
+    echo "runpodctl output: $CREATE_OUTPUT"
+
+    # Try to extract pod ID — runpodctl typically prints: pod "abc123" created
+    POD_ID=$(echo "$CREATE_OUTPUT" | grep -oE 'pod "[^"]+"' | grep -oE '"[^"]+"' | tr -d '"' | head -1 || true)
+    # Fallback: unquoted format "pod abc123 created"
+    if [[ -z "$POD_ID" ]]; then
+        POD_ID=$(echo "$CREATE_OUTPUT" | grep -oE 'pod [^ "]+' | awk '{print $2}' | head -1 || true)
+    fi
 
     if [[ -z "$POD_ID" ]]; then
-        echo "Error: Failed to parse POD_ID from runpodctl output." >&2
+        echo "Error: Failed to parse POD_ID from runpodctl output above." >&2
         exit 1
     fi
 
@@ -118,33 +129,65 @@ else
     runpodctl start pod "$POD_ID"
 fi
 
-# ── Poll until TCP-22 port is live ─────────────────────────────────────────
+# ── Poll until SSH is ready (supports both community and secure cloud) ─────
+# Secure cloud: RunPod proxy  → user@ssh.runpod.io  (no direct IP/port)
+# Community cloud: direct TCP → IP:port
 echo -n "Waiting for SSH on Pod $POD_ID"
-POD_IP=""
-POD_PORT=""
+SSH_USER=""
+SSH_HOST=""
+SSH_PORT="22"
 for i in $(seq 1 60); do
-    POD_INFO=$(runpodctl get pod "$POD_ID" 2>/dev/null || true)
-    # Parse IP and TCP-22 port — format varies; try common patterns
-    POD_IP=$(echo "$POD_INFO" | grep -oP '(?<=IP:\s)\S+' | head -1 || true)
-    POD_PORT=$(echo "$POD_INFO" | grep -oP '\d+(?=->22/tcp)' | head -1 || true)
+    # runpodctl ssh connect prints the full ssh command once the pod is ready
+    CONNECT_CMD=$(runpodctl ssh connect "$POD_ID" 2>&1 || true)
 
-    if [[ -n "$POD_IP" && -n "$POD_PORT" ]]; then
+    # Secure cloud proxy: "ssh <user>@ssh.runpod.io ..."
+    if echo "$CONNECT_CMD" | grep -q '@ssh.runpod.io'; then
+        SSH_USER=$(echo "$CONNECT_CMD" | grep -oE '[^ ]+@ssh\.runpod\.io' | head -1)
+        SSH_HOST="ssh.runpod.io"
         echo ""
-        echo "SSH ready: $POD_IP:$POD_PORT"
+        echo "SSH ready (proxy): $SSH_USER"
         break
     fi
+
+    # Direct TCP: "ssh root@<IP> -p <PORT>"
+    if echo "$CONNECT_CMD" | grep -qE '^ssh root@[0-9]+\.[0-9]+'; then
+        SSH_HOST=$(echo "$CONNECT_CMD" | grep -oE '@[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tr -d '@' | head -1)
+        SSH_PORT=$(echo "$CONNECT_CMD" | grep -oE '\-p [0-9]+' | awk '{print $2}' | head -1)
+        SSH_PORT="${SSH_PORT:-22}"
+        echo ""
+        echo "SSH ready (direct): $SSH_HOST:$SSH_PORT"
+        break
+    fi
+
+    # Community cloud fallback: try parsing IP:port from pod info table
+    POD_INFO=$(runpodctl get pod "$POD_ID" 2>/dev/null || true)
+    POD_IP=$(echo "$POD_INFO" | grep -oE 'IP:[[:space:]]+[^ ]+' | awk '{print $NF}' | head -1 || true)
+    POD_PORT_MAPPED=$(echo "$POD_INFO" | grep -oE '[0-9]+->22/tcp' | grep -oE '^[0-9]+' | head -1 || true)
+    if [[ -n "$POD_IP" && -n "$POD_PORT_MAPPED" ]]; then
+        SSH_HOST="$POD_IP"
+        SSH_PORT="$POD_PORT_MAPPED"
+        echo ""
+        echo "SSH ready (direct): $SSH_HOST:$SSH_PORT"
+        break
+    fi
+
     echo -n "."
     sleep 10
 done
 
-if [[ -z "$POD_IP" || -z "$POD_PORT" ]]; then
+if [[ -z "$SSH_HOST" ]]; then
     echo ""
-    echo "Error: Timed out waiting for Pod SSH port. Check 'runpodctl get pod $POD_ID'." >&2
+    echo "Error: Timed out waiting for Pod SSH. Check 'runpodctl get pod $POD_ID'." >&2
     exit 1
 fi
 
 SSH_OPTS="-i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no -o ConnectTimeout=15"
-SSH_TARGET="root@$POD_IP -p $POD_PORT"
+if [[ -n "$SSH_USER" && "$SSH_HOST" == "ssh.runpod.io" ]]; then
+    # Proxy mode: user already contains user@host
+    SSH_TARGET="$SSH_USER"
+else
+    SSH_TARGET="root@$SSH_HOST -p $SSH_PORT"
+fi
 
 # ── Launch remote training via stdin ──────────────────────────────────────
 echo "Launching training on Pod (config: $CONFIG, force-restart: $FORCE_RESTART, debug: $DEBUG)..."
@@ -164,7 +207,7 @@ cleanup() {
     echo ""
     echo "Reattach log:  ssh $SSH_OPTS $SSH_TARGET 'tail -f /workspace/logs/current.log'"
     echo "Reattach tmux: ssh $SSH_OPTS $SSH_TARGET 'tmux attach -t train'"
-    echo "Stop Pod now:  runpodctl stop pod $POD_ID"
+    echo "Stop Pod now:  runpodctl stop pod ${POD_ID}"
 }
 trap cleanup INT TERM
 
