@@ -194,6 +194,10 @@ def main():
         logger.info("Starting training...")
         logger.info("=" * 80)
 
+        # Re-enable tqdm progress bar — it was suppressed during model loading to avoid
+        # noisy loading bars, but we want it back for the training loop.
+        transformers.utils.logging.enable_progress_bar()
+
         # Reset peak VRAM counters so the summary reflects training only (not model load)
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
