@@ -209,10 +209,15 @@ class ChildSpeechDataset(Dataset):
             transcription = self.text_normalizer(transcription)
 
         # Tokenize transcription for labels
+        # Whisper's decoder has a hard limit of 448 tokens; truncate to avoid runtime errors
         labels = self.processor.tokenizer(
             transcription,
-            return_tensors="pt"
-        ).input_ids[0]  # Remove batch dimension
+            return_tensors="pt",
+            max_length=448,
+            truncation=True,
+        ).input_ids[
+            0
+        ]  # Remove batch dimension
 
         # Return processed sample
         return {
