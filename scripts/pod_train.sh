@@ -94,9 +94,10 @@ if [[ -z "${POD_ID:-}" ]]; then
         --gpuType "$GPU_TYPE" \
         --secureCloud \
         --cost 0.80 \
-        --imageName "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04" \
+        --imageName "runpod/pytorch:2.6.0-py3.11-cuda12.4.1-devel-ubuntu22.04" \
         --containerDiskSize 50 \
         --networkVolumeId "$NETWORK_VOLUME_ID" \
+        --volumePath /workspace \
         --startSSH \
         --ports "22/tcp" \
         --env "HF_HOME=/workspace/.cache/huggingface" \
@@ -192,8 +193,8 @@ fi
 # ── Launch remote training via stdin ──────────────────────────────────────
 echo "Launching training on Pod (config: $CONFIG, force-restart: $FORCE_RESTART, debug: $DEBUG)..."
 # shellcheck disable=SC2086
-CONFIG="$CONFIG" FORCE_RESTART="$FORCE_RESTART" DEBUG="$DEBUG" \
-    ssh $SSH_OPTS $SSH_TARGET "CONFIG='$CONFIG' FORCE_RESTART='$FORCE_RESTART' DEBUG='$DEBUG' bash -s" \
+CONFIG="$CONFIG" FORCE_RESTART="$FORCE_RESTART" DEBUG="$DEBUG" RUNPOD_API_KEY="$RUNPOD_API_KEY" POD_ID="$POD_ID" \
+    ssh $SSH_OPTS $SSH_TARGET "CONFIG='$CONFIG' FORCE_RESTART='$FORCE_RESTART' DEBUG='$DEBUG' RUNPOD_API_KEY='$RUNPOD_API_KEY' POD_ID='$POD_ID' bash -s" \
     < "$SCRIPT_DIR/remote_train.sh"
 
 # ── Stream log — Ctrl+C disconnects tail only ─────────────────────────────

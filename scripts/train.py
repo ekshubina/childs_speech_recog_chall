@@ -14,10 +14,17 @@ Usage:
 """
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
 import torch
+
+# Suppress noisy progress bars from transformers/accelerate during model loading
+import transformers
+
+transformers.utils.logging.set_verbosity_error()
+logging.getLogger("accelerate").setLevel(logging.WARNING)
 
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))

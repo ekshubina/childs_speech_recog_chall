@@ -36,16 +36,23 @@ if [[ ! -d "$REPO/.git" ]]; then
     git clone https://github.com/ekshubina/childs_speech_recog_chall.git "$REPO"
 fi
 
-# Symlink /workspace/data → repo's data/ so config paths resolve correctly.
-# Data is uploaded to the network volume at /workspace/data/ via pod_sync_data.sh.
-if [[ ! -L "$REPO/data" ]]; then
-    if [[ -d /workspace/data ]]; then
-        ln -sfn /workspace/data "$REPO/data"
-        echo "Linked $REPO/data → /workspace/data" | tee -a "$LOG"
-    else
-        echo "ERROR: /workspace/data not found. Run ./scripts/pod_sync_data.sh first to upload training data." | tee -a "$LOG"
-        exit 1
+# Symlink network volume data → repo's data/ so config paths resolve correctly.
+# pod_sync_data.sh uploads to s3://<bucket>/data/ which lands at /workspace/data/
+# on pods created with --volumePath /workspace, or /runpod/data/ otherwise.
+DATA_SRC=""
+for candidate in /workspace/data /runpod/data; do
+    if [[ -d "$candidate" ]]; then
+        DATA_SRC="$candidate"
+        break
     fi
+done
+if [[ -z "$DATA_SRC" ]]; then
+    echo "ERROR: training data not found (checked /workspace/data and /runpod/data). Run ./scripts/pod_sync_data.sh first." | tee -a "$LOG"
+    exit 1
+fi
+if [[ ! -L "$REPO/data" || "$(readlink "$REPO/data")" != "$DATA_SRC" ]]; then
+    ln -sfn "$DATA_SRC" "$REPO/data"
+    echo "Linked $REPO/data → $DATA_SRC" | tee -a "$LOG"
 fi
 
 # Derive OUTPUT_DIR from the YAML config — avoids hardcoding the run name
@@ -80,51 +87,58 @@ fi
     fi
 } >> "$LOG"
 
-# ── Kill any existing train session to prevent duplicate runs ──────────────
-tmux kill-session -t train 2>/dev/null || true
-
-# ── Launch detached tmux session ───────────────────────────────────────────
-# The session: syncs code, activates venv (bootstrapping if needed),
-# runs training, writes EXIT_CODE, then self-stops the Pod.
-tmux new-session -d -s train "
+# ── Write the training script so tmux can run it without quote escaping ────
+TRAIN_SCRIPT=/workspace/logs/run_train.sh
+cat > "$TRAIN_SCRIPT" << SCRIPT
+#!/usr/bin/env bash
 set -euo pipefail
 
 LOG=$LOG
 REPO=$REPO
 CONFIG=$CONFIG
 RESUME_FLAG='$RESUME_FLAG'
-
 DEBUG=$DEBUG
+BRANCH=$BRANCH
+POD_ID=${POD_ID:-}
+RUNPOD_API_KEY=${RUNPOD_API_KEY:-}
 
-cd \$REPO
+cd "\$REPO"
 
 # Sync latest code
 git fetch origin
-git checkout ${BRANCH}
-git pull origin ${BRANCH}
+git checkout "\$BRANCH"
+git pull origin "\$BRANCH"
 
-# Bootstrap venv on first run
-if [[ ! -d venv ]]; then
-    echo 'Creating Python virtual environment...' | tee -a \$LOG
-    python -m venv venv
-fi
-
-source venv/bin/activate
-pip install -q -r requirements.txt
+# Install all project dependencies into the container's system Python.
+# No venv needed — we're root in an isolated container.
+echo 'Installing dependencies...' | tee -a "\$LOG"
+pip install -q --root-user-action=ignore -r "\$REPO/requirements.txt" 2>&1 | tee -a "\$LOG"
 
 # Build debug flag
 DEBUG_FLAG=""
-[[ "$DEBUG" == "1" ]] && DEBUG_FLAG="--debug"
+[[ "\$DEBUG" == "1" ]] && DEBUG_FLAG="--debug"
 
 # Run training — all output appended to persistent log
-  eval python scripts/train.py --config "\$CONFIG" \$RESUME_FLAG \$DEBUG_FLAG 2>&1 | tee -a \$LOG
+eval python scripts/train.py --config "\$CONFIG" \$RESUME_FLAG \$DEBUG_FLAG 2>&1 | tee -a "\$LOG"
 TRAIN_EXIT=\${PIPESTATUS[0]}
-echo \"EXIT_CODE=\$TRAIN_EXIT\" >> \$LOG
+echo "EXIT_CODE=\$TRAIN_EXIT" >> "\$LOG"
 
 # Self-stop Pod — GPU billing ends immediately
-echo 'Training complete. Stopping Pod...' | tee -a \$LOG
-runpodctl stop pod \$RUNPOD_POD_ID
-"
+echo 'Training complete. Stopping Pod...' | tee -a "\$LOG"
+if [[ -n "\$RUNPOD_API_KEY" && -n "\$POD_ID" ]]; then
+    runpodctl config --apiKey "\$RUNPOD_API_KEY" &>/dev/null || true
+    runpodctl stop pod "\$POD_ID"
+else
+    echo 'WARNING: RUNPOD_API_KEY or POD_ID not set — pod will not auto-stop.' | tee -a "\$LOG"
+fi
+SCRIPT
+chmod +x "$TRAIN_SCRIPT"
+
+# ── Kill any existing train session to prevent duplicate runs ──────────────
+tmux kill-session -t train 2>/dev/null || true
+
+# ── Launch detached tmux session ───────────────────────────────────────────
+tmux new-session -d -s train "bash $TRAIN_SCRIPT"
 
 echo "Training session started in tmux (session: train). SSH connection closing — training continues on Pod."
 echo "Reattach log:  ssh root@<IP> -p <PORT> \"tail -f $LOG\""
