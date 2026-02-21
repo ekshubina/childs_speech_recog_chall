@@ -2,10 +2,13 @@
 # pod_tensorboard.sh — open a local TensorBoard against a running RunPod Pod via SSH tunnel.
 #
 # Usage:
-#   ./scripts/pod_tensorboard.sh                                           # default config + port 6006
+#   ./scripts/pod_tensorboard.sh                        # all branches (parent logs/ dir)
+#   ./scripts/pod_tensorboard.sh --branch ep1           # single branch only
 #   ./scripts/pod_tensorboard.sh --config configs/baseline_whisper_medium.yaml
 #   ./scripts/pod_tensorboard.sh --port 6007
-#   ./scripts/pod_tensorboard.sh --config configs/baseline_whisper_medium.yaml --port 6007
+#
+# Omitting --branch points TensorBoard at the parent logs/ directory so all
+# branch runs appear together and can be compared side-by-side.
 #
 # Ctrl+C closes the local tunnel only — TensorBoard keeps running on the Pod.
 # Re-run the script anytime to reopen the tunnel.
@@ -19,6 +22,7 @@ ENV_FILE="$REPO_ROOT/.runpod.env"
 # ── Parse arguments ────────────────────────────────────────────────────────
 CONFIG="configs/baseline_whisper_small.yaml"
 LOCAL_PORT="6006"
+BRANCH=""  # empty = all branches
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -30,9 +34,13 @@ while [[ $# -gt 0 ]]; do
             LOCAL_PORT="$2"
             shift 2
             ;;
+        --branch)
+            BRANCH="$2"
+            shift 2
+            ;;
         *)
             echo "Error: Unknown argument: $1" >&2
-            echo "Usage: $0 [--config <yaml>] [--port <local-port>]" >&2
+            echo "Usage: $0 [--config <yaml>] [--branch <name>] [--port <local-port>]" >&2
             exit 1
             ;;
     esac
@@ -58,10 +66,26 @@ if [[ -z "${POD_ID:-}" ]]; then
 fi
 
 # ── Derive TB log dir from the YAML config (mirrors remote_train.sh) ──────
-# Seq2SeqTrainingArguments defaults logging_dir to {output_dir}/runs when
-# logging_dir is not explicitly passed, which is the case in trainer.py.
-OUTPUT_DIR_REL=$(grep 'output_dir' "$REPO_ROOT/$CONFIG" | head -1 | sed 's/.*output_dir[[:space:]]*:[[:space:]]*//')
-TB_LOGDIR="/workspace/childs_speech_recog_chall/${OUTPUT_DIR_REL}/runs"
+# train.py appends the git branch to both output_dir and logging_dir at runtime.
+# When logging_dir is set in the YAML, TF events land there (not output_dir/runs).
+#
+# No --branch: point at the repo root so ALL runs are visible — both old runs that
+#              wrote to checkpoints/<name>/runs/ and new runs that write to logs/<name>/.
+# --branch X : watch only that branch's exact logging directory.
+LOGGING_DIR_REL=$(grep 'logging_dir' "$REPO_ROOT/$CONFIG" | head -1 | sed 's/.*logging_dir[[:space:]]*:[[:space:]]*//' || true)
+if [[ -n "$BRANCH" ]]; then
+    if [[ -n "$LOGGING_DIR_REL" ]]; then
+        TB_LOGDIR="/workspace/childs_speech_recog_chall/${LOGGING_DIR_REL}_${BRANCH}"
+    else
+        OUTPUT_DIR_REL=$(grep 'output_dir' "$REPO_ROOT/$CONFIG" | head -1 | sed 's/.*output_dir[[:space:]]*:[[:space:]]*//')
+        TB_LOGDIR="/workspace/childs_speech_recog_chall/${OUTPUT_DIR_REL}_${BRANCH}/runs"
+    fi
+else
+    # No branch specified — scan the whole repo so both checkpoints/*/runs/ and logs/
+    # directories are visible together. TensorBoard only displays dirs with event files.
+    TB_LOGDIR="/workspace/childs_speech_recog_chall"
+fi
+echo "TensorBoard logdir: $TB_LOGDIR"
 
 # ── Detect SSH connection mode (proxy vs direct) — mirrors pod_train.sh ───
 SSH_OPTS="-i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no -o ConnectTimeout=15"
@@ -107,11 +131,11 @@ else
     SSH_TARGET="root@$SSH_HOST -p $SSH_PORT"
 fi
 
-# ── Start TensorBoard on Pod if not already running ───────────────────────
-echo "Ensuring TensorBoard is running on Pod (logdir: $TB_LOGDIR)..."
+# ── Start TensorBoard on Pod (always restart so logdir is current) ────────
+echo "Starting TensorBoard on Pod (logdir: $TB_LOGDIR)..."
 # shellcheck disable=SC2086
 ssh $SSH_OPTS $SSH_TARGET "
-    tmux has-session -t tb 2>/dev/null && echo 'TensorBoard already running.' || \
+    tmux kill-session -t tb 2>/dev/null || true
     tmux new-session -d -s tb \
         'tensorboard --logdir $TB_LOGDIR --host 0.0.0.0 --port 6006 2>&1 | tee /workspace/logs/tensorboard.log'
 "
