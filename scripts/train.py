@@ -23,8 +23,8 @@ import torch
 # Suppress noisy progress bars from transformers/accelerate during model loading
 import transformers
 
-transformers.utils.logging.set_verbosity_info()
-logging.getLogger("accelerate").setLevel(logging.INFO)
+# transformers.utils.logging.set_verbosity_info()
+# logging.getLogger("accelerate").setLevel(logging.INFO)
 
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -331,9 +331,14 @@ def main():
         effective_bs = per_device_bs * grad_accum
         logger.info(f"Effective batch size:   {effective_bs}  (per_device={per_device_bs} × grad_accum={grad_accum})")
         logger.info(f"Learning rate:          {config['training'].get('learning_rate', 'N/A')}")
+        logger.info(f"LR scheduler:           {config['training'].get('lr_scheduler_type', 'linear')}")
         logger.info(f"FP16:                   {config['training'].get('fp16', False)}")
         logger.info(f"Gradient checkpointing: {config['model'].get('gradient_checkpointing', False)}")
-        logger.info(f"Freeze encoder:         {config['model'].get('freeze_encoder', False)}")
+        logger.info(f"Freeze encoder (static):{config['model'].get('freeze_encoder', False)}")
+        logger.info(f"Encoder unfreeze step:  {config['model'].get('freeze_encoder_steps', 0)}  (0 = disabled)")
+        logger.info(f"Early stopping:         patience={config['training'].get('early_stopping_patience', 0)}  (0 = disabled)")
+        logger.info(f"SpecAugment:            {config.get('data', {}).get('specaugment', False)}")
+        logger.info(f"Curriculum learning:    {config.get('data', {}).get('curriculum_learning', False)}")
         logger.info("=" * 80)
 
         return 0

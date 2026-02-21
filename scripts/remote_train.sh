@@ -58,10 +58,13 @@ fi
 # Derive OUTPUT_DIR from the YAML config — avoids hardcoding the run name
 # Expects a line like:  output_dir: checkpoints/baseline_whisper_small
 OUTPUT_DIR_REL=$(grep 'output_dir' "$REPO/$CONFIG" | head -1 | sed 's/.*output_dir[[:space:]]*:[[:space:]]*//')
-OUTPUT_DIR="$REPO/${OUTPUT_DIR_REL}"
+# train.py appends the git branch at runtime (e.g. baseline_whisper_small_ep1).
+# Mirror that logic here so checkpoint auto-detection looks in the right directory.
+OUTPUT_DIR="$REPO/${OUTPUT_DIR_REL}_${BRANCH}"
 
 # ── Auto-detect latest checkpoint ──────────────────────────────────────────
-if [[ "${FORCE_RESTART}" == "1" ]]; then
+# Debug runs are smoke tests — never resume from a previous checkpoint.
+if [[ "${FORCE_RESTART}" == "1" || "${DEBUG}" == "1" ]]; then
     RESUME_FLAG=""
     LATEST_CKPT=""
 else
