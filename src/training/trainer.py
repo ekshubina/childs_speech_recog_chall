@@ -11,9 +11,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 import torch
-from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments, WhisperProcessor
+from transformers import EarlyStoppingCallback, Seq2SeqTrainer, Seq2SeqTrainingArguments, WhisperProcessor
 from transformers.trainer_utils import get_last_checkpoint
 
+from src.training.callbacks import EncoderUnfreezeCallback
 from src.training.metrics import compute_metrics
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ class WhisperTrainingConfig:
     greater_is_better: bool = False  # Lower WER is better
     generation_max_length: int = 225
     predict_with_generate: bool = True
+    lr_scheduler_type: str = "linear"
 
 
 class WhisperTrainer(Seq2SeqTrainer):
@@ -176,6 +178,9 @@ class WhisperTrainer(Seq2SeqTrainer):
             save_total_limit=training_config.get("save_total_limit", 3),
         )
 
+        # Resolve lr_scheduler_type (new field, default linear for backwards-compat)
+        lr_scheduler_type = training_config.get("lr_scheduler_type", "linear")
+
         # Log warning if fp16 requested but not on CUDA
         if training_config.get("fp16", False) and not use_cuda:
             if use_mps:
@@ -245,6 +250,12 @@ class WhisperTrainer(Seq2SeqTrainer):
             dataloader_num_workers=dataloader_num_workers,
             dataloader_pin_memory=dataloader_pin_memory,
             dataloader_prefetch_factor=dataloader_prefetch_factor,
+            # Previously-ignored YAML keys wired in
+            lr_scheduler_type=lr_scheduler_type,
+            optim=training_config.get("optim", "adamw_torch"),
+            weight_decay=training_config.get("weight_decay", 0.0),
+            max_grad_norm=training_config.get("max_grad_norm", 1.0),
+            logging_dir=training_config.get("logging_dir", None),
         )
 
         # Use default data collator if not provided
@@ -259,6 +270,21 @@ class WhisperTrainer(Seq2SeqTrainer):
         # Create compute_metrics wrapper with tokenizer
         def compute_metrics_with_tokenizer(pred):
             return compute_metrics(pred, tokenizer=processor.tokenizer)
+
+        # Build callback list
+        callbacks = []
+
+        # Early stopping callback
+        early_stopping_patience = training_config.get("early_stopping_patience", 0)
+        if early_stopping_patience > 0:
+            callbacks.append(EarlyStoppingCallback(early_stopping_patience=early_stopping_patience))
+            logger.info(f"EarlyStoppingCallback: patience={early_stopping_patience} evals")
+
+        # Encoder unfreeze callback
+        freeze_encoder_steps = model_config.get("freeze_encoder_steps", 0)
+        if freeze_encoder_steps > 0:
+            callbacks.append(EncoderUnfreezeCallback(freeze_steps=freeze_encoder_steps))
+            logger.info(f"EncoderUnfreezeCallback: freeze_steps={freeze_encoder_steps}")
 
         # Handle checkpoint resumption
         checkpoint = None
@@ -280,6 +306,7 @@ class WhisperTrainer(Seq2SeqTrainer):
             eval_dataset=eval_dataset,
             data_collator=data_collator,
             compute_metrics=compute_metrics_with_tokenizer,
+            callbacks=callbacks if callbacks else None,
         )
 
         logger.info("WhisperTrainer created successfully")

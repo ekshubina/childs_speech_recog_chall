@@ -536,5 +536,116 @@ class TestWhisperDataCollator:
         assert len(batch["utterance_ids"]) == 1
 
 
+class TestSpecAugment:
+    """Tests for SpecAugment data augmentation in ChildSpeechDataset."""
+
+    @pytest.fixture
+    def augment_processor(self):
+        """Mock processor that returns a known all-ones tensor so SpecAugment masking is detectable."""
+        import torch
+
+        processor = Mock()
+
+        # Processor call returns an object whose .input_features[0] is a (80, 3000) tensor of ones
+        features_obj = Mock()
+        features_obj.input_features = [torch.ones(80, 3000)]
+        processor.return_value = features_obj
+
+        tokenizer = Mock()
+        tokenizer_output = Mock()
+        tokenizer_output.input_ids = [torch.tensor([1, 2, 3])]
+        tokenizer.return_value = tokenizer_output
+        processor.tokenizer = tokenizer
+
+        return processor
+
+    @pytest.fixture
+    def one_sample(self, tmp_path, augment_processor):
+        """Minimal dataset with a single audio file and matching mock processor."""
+        import soundfile as sf
+
+        audio_dir = tmp_path / "audio_0"
+        audio_dir.mkdir()
+        audio_data = np.ones(16000, dtype=np.float32)
+        sf.write(str(audio_dir / "U_aug001.flac"), audio_data, 16000)
+
+        samples = [
+            {
+                "utterance_id": "U_aug001",
+                "audio_path": "audio/U_aug001.flac",
+                "orthographic_text": "hello",
+                "age_bucket": "5-6",
+            }
+        ]
+        return samples, [audio_dir], augment_processor
+
+    @pytest.mark.unit
+    def test_specaugment_enabled_masks_features(self, one_sample):
+        """With augment=True the returned input_features should have zeros introduced by masking."""
+        import torch
+
+        samples, audio_dirs, processor = one_sample
+        dataset = ChildSpeechDataset(
+            samples=samples,
+            audio_dirs=audio_dirs,
+            processor=processor,
+            augment=True,
+            freq_mask_param=27,
+            time_mask_param=100,
+        )
+
+        item = dataset[0]
+        features = item["input_features"]
+
+        # FrequencyMasking and TimeMasking set masked values to 0.
+        # Starting from an all-ones tensor, at least some zeros must appear.
+        assert isinstance(features, torch.Tensor)
+        assert features.shape == (80, 3000)
+        assert (features == 0).any(), "SpecAugment should introduce at least one masked (zero) value"
+
+    @pytest.mark.unit
+    def test_specaugment_disabled_preserves_features(self, one_sample):
+        """With augment=False the returned input_features should be the unmodified processor output (all ones)."""
+        import torch
+
+        samples, audio_dirs, processor = one_sample
+        dataset = ChildSpeechDataset(
+            samples=samples,
+            audio_dirs=audio_dirs,
+            processor=processor,
+            augment=False,
+        )
+
+        item = dataset[0]
+        features = item["input_features"]
+
+        assert isinstance(features, torch.Tensor)
+        assert features.shape == (80, 3000)
+        assert (features == 1).all(), "Without augmentation all values should remain ones (unmodified processor output)"
+
+    @pytest.mark.unit
+    def test_specaugment_stochastic_across_calls(self, one_sample):
+        """Two calls on the same index with augment=True should (almost certainly) give different outputs."""
+        import torch
+
+        samples, audio_dirs, processor = one_sample
+        dataset = ChildSpeechDataset(
+            samples=samples,
+            audio_dirs=audio_dirs,
+            processor=processor,
+            augment=True,
+            freq_mask_param=27,
+            time_mask_param=100,
+        )
+
+        features_a = dataset[0]["input_features"]
+        features_b = dataset[0]["input_features"]
+
+        # Masks are randomly placed; probability of identical masks is astronomically small.
+        assert not torch.equal(
+            features_a, features_b
+        ), "Two augmented draws on the same sample should differ (stochastic masking)"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

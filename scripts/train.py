@@ -38,6 +38,9 @@ from src.training.trainer import WhisperTrainer
 from src.utils.config import load_config
 from src.utils.logging_utils import setup_logger
 
+# Age-bucket order for curriculum learning (youngest → oldest)
+AGE_ORDER = {"3-4": 0, "5-6": 1, "7-8": 2, "9-10": 3, "11-12": 4, "13+": 5}
+
 
 def get_git_branch() -> str:
     """Return the current git branch name, sanitized for use in a directory path.
@@ -164,6 +167,15 @@ def main():
         logger.info(f"Training samples: {len(train_manifest):,}")
         logger.info(f"Validation samples: {len(val_manifest):,}")
 
+        # Age-based curriculum sort (epoch 1 only; HF Trainer reshuffles from epoch 2 onward)
+        data_config = config.get("data", {})
+        if data_config.get("curriculum_learning", False):
+            train_manifest = sorted(train_manifest, key=lambda s: AGE_ORDER.get(s.get("age_bucket", ""), 99))
+            from collections import Counter
+
+            bucket_dist = Counter(s.get("age_bucket", "unknown") for s in train_manifest)
+            logger.info(f"Curriculum sort applied. Age-bucket distribution (in epoch-1 order): {dict(bucket_dist)}")
+
         # Debug mode: use small subset
         if args.debug:
             logger.warning("DEBUG MODE: Using only 100 training and 20 validation samples")
@@ -174,8 +186,21 @@ def main():
         logger.info("Creating datasets...")
         audio_dirs = config["data"]["audio_dirs"]
 
+        # SpecAugment settings (train only)
+        specaugment = data_config.get("specaugment", False)
+        freq_mask_param = data_config.get("freq_mask_param", 27)
+        time_mask_param = data_config.get("time_mask_param", 100)
+        if specaugment:
+            logger.info(f"SpecAugment enabled: freq_mask_param={freq_mask_param}, time_mask_param={time_mask_param}")
+
         train_dataset = ChildSpeechDataset(
-            samples=train_manifest, audio_dirs=audio_dirs, processor=processor, sample_rate=16000
+            samples=train_manifest,
+            audio_dirs=audio_dirs,
+            processor=processor,
+            sample_rate=16000,
+            augment=specaugment,
+            freq_mask_param=freq_mask_param,
+            time_mask_param=time_mask_param,
         )
 
         val_dataset = ChildSpeechDataset(samples=val_manifest, audio_dirs=audio_dirs, processor=processor, sample_rate=16000)

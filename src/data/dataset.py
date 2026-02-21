@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
+import torchaudio.transforms as T
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset
 from transformers import WhisperProcessor
@@ -59,6 +60,9 @@ class ChildSpeechDataset(Dataset):
         normalize_audio_amplitude: bool = True,
         max_audio_length: float = 30.0,
         samples: Optional[List[Dict]] = None,
+        augment: bool = False,
+        freq_mask_param: int = 27,
+        time_mask_param: int = 100,
     ):
         self.audio_dirs = [Path(d) for d in audio_dirs] if audio_dirs else []
         self.processor = processor
@@ -66,6 +70,14 @@ class ChildSpeechDataset(Dataset):
         self.sample_rate = sample_rate
         self.normalize_audio_amplitude = normalize_audio_amplitude
         self.max_audio_length = max_audio_length
+        self.augment = augment
+        self.freq_mask_param = freq_mask_param
+        self.time_mask_param = time_mask_param
+
+        # Build SpecAugment transforms once so they are reused across calls
+        if self.augment:
+            self._freq_masking = T.FrequencyMasking(freq_mask_param=self.freq_mask_param)
+            self._time_masking = T.TimeMasking(time_mask_param=self.time_mask_param)
 
         # Support both manifest_path and pre-loaded samples
         if samples is not None:
@@ -200,6 +212,11 @@ class ChildSpeechDataset(Dataset):
             sampling_rate=self.sample_rate,
             return_tensors="pt"
         ).input_features[0]  # Remove batch dimension
+
+        # Apply SpecAugment (frequency + time masking) for data augmentation
+        if self.augment:
+            input_features = self._freq_masking(input_features)
+            input_features = self._time_masking(input_features)
 
         # Process transcription text
         transcription = sample['orthographic_text']
