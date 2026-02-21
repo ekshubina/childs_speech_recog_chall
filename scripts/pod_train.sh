@@ -4,6 +4,7 @@
 # Usage:
 #   ./scripts/pod_train.sh --config configs/baseline_whisper_small.yaml
 #   ./scripts/pod_train.sh --config configs/baseline_whisper_small.yaml --force-restart
+#   ./scripts/pod_train.sh --config configs/baseline_whisper_small.yaml --branch my-feature-branch
 #
 # Reads .runpod.env for RUNPOD_API_KEY, POD_ID, NETWORK_VOLUME_ID, SSH_KEY_PATH, GPU_TYPE.
 # On first run (POD_ID unset): creates a new Pod and writes its ID back to .runpod.env.
@@ -17,12 +18,13 @@ ENV_FILE="$REPO_ROOT/.runpod.env"
 
 # ── Usage ──────────────────────────────────────────────────────────────────
 usage() {
-    echo "Usage: $0 --config <config-path> [--force-restart]"
+    echo "Usage: $0 --config <config-path> [--force-restart] [--branch <branch>]"
     echo ""
     echo "Options:"
     echo "  --config <path>    Path to YAML config (required), e.g. configs/baseline_whisper_small.yaml"
     echo "  --force-restart    Ignore existing checkpoints; start training from epoch 0"
     echo "  --debug            Run with 100 train / 20 val samples (smoke test)"
+    echo "  --branch <name>    Git branch to checkout on RunPod (default: main)"
     echo "  --help             Show this message"
     exit 1
 }
@@ -31,6 +33,7 @@ usage() {
 CONFIG=""
 FORCE_RESTART=0
 DEBUG=0
+BRANCH="main"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -45,6 +48,10 @@ while [[ $# -gt 0 ]]; do
         --debug)
             DEBUG=1
             shift
+            ;;
+        --branch)
+            BRANCH="$2"
+            shift 2
             ;;
         --help|-h)
             usage
@@ -191,10 +198,10 @@ else
 fi
 
 # ── Launch remote training via stdin ──────────────────────────────────────
-echo "Launching training on Pod (config: $CONFIG, force-restart: $FORCE_RESTART, debug: $DEBUG)..."
+echo "Launching training on Pod (config: $CONFIG, force-restart: $FORCE_RESTART, debug: $DEBUG, branch: $BRANCH)..."
 # shellcheck disable=SC2086
-CONFIG="$CONFIG" FORCE_RESTART="$FORCE_RESTART" DEBUG="$DEBUG" RUNPOD_API_KEY="$RUNPOD_API_KEY" POD_ID="$POD_ID" \
-    ssh $SSH_OPTS $SSH_TARGET "CONFIG='$CONFIG' FORCE_RESTART='$FORCE_RESTART' DEBUG='$DEBUG' RUNPOD_API_KEY='$RUNPOD_API_KEY' POD_ID='$POD_ID' bash -s" \
+CONFIG="$CONFIG" FORCE_RESTART="$FORCE_RESTART" DEBUG="$DEBUG" BRANCH="$BRANCH" RUNPOD_API_KEY="$RUNPOD_API_KEY" POD_ID="$POD_ID" \
+    ssh $SSH_OPTS $SSH_TARGET "CONFIG='$CONFIG' FORCE_RESTART='$FORCE_RESTART' DEBUG='$DEBUG' BRANCH='$BRANCH' RUNPOD_API_KEY='$RUNPOD_API_KEY' POD_ID='$POD_ID' bash -s" \
     < "$SCRIPT_DIR/remote_train.sh"
 
 # ── Stream log — Ctrl+C disconnects tail only ─────────────────────────────
