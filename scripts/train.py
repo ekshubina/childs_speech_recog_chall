@@ -23,8 +23,8 @@ import torch
 # Suppress noisy progress bars from transformers/accelerate during model loading
 import transformers
 
-transformers.utils.logging.set_verbosity_error()
-logging.getLogger("accelerate").setLevel(logging.WARNING)
+transformers.utils.logging.set_verbosity_info()
+logging.getLogger("accelerate").setLevel(logging.INFO)
 
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -37,6 +37,30 @@ from src.models.whisper_model import prepare_model_for_finetuning
 from src.training.trainer import WhisperTrainer
 from src.utils.config import load_config
 from src.utils.logging_utils import setup_logger
+
+
+def get_git_branch() -> str:
+    """Return the current git branch name, sanitized for use in a directory path.
+
+    Replaces '/' with '-' so that branch names like 'feature/foo' become 'feature-foo'.
+    Falls back to 'unknown-branch' if git is unavailable or the repo has no commits.
+    """
+    import subprocess
+
+    try:
+        branch = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                stderr=subprocess.DEVNULL,
+                cwd=Path(__file__).parent.parent,
+            )
+            .decode()
+            .strip()
+        )
+        # Sanitize: replace path separators with dashes
+        return branch.replace("/", "-") if branch else "unknown-branch"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown-branch"
 
 
 def parse_args():
@@ -90,6 +114,17 @@ def main():
         # Load configuration
         logger.info("Loading configuration...")
         config = load_config(args.config)
+
+        # Append git branch name to output / logging directories so that checkpoints
+        # from different branches never collide and are always traceable to their origin.
+        git_branch = get_git_branch()
+        logger.info(f"Git branch: {git_branch}")
+        base_output_dir = config["training"].get("output_dir", "checkpoints/whisper-finetuned")
+        config["training"]["output_dir"] = f"{base_output_dir}_{git_branch}"
+        if "logging_dir" in config["training"]:
+            config["training"]["logging_dir"] = f"{config['training']['logging_dir']}_{git_branch}"
+        logger.info(f"Checkpoint directory: {config['training']['output_dir']}")
+
         logger.info(f"Model: {config['model']['name']} - {config['model']['variant']}")
         logger.info(f"Training epochs: {config['training']['num_epochs']}")
         logger.info(f"Batch size: {config['training']['batch_size']}")
