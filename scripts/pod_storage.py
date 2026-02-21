@@ -275,8 +275,14 @@ def cmd_get(s3, args) -> None:
 
         for run in runs:
             local_run_dir = REPO_ROOT / "checkpoints" / run
-            print(f">>> Downloading checkpoints/{run}/ ...")
-            objs = walk_keys(s3, f"{ckpt_root}/{run}")
+            if args.subdir:
+                remote_prefix = f"{ckpt_root}/{run}/{args.subdir}"
+                label = f"checkpoints/{run}/{args.subdir}/"
+            else:
+                remote_prefix = f"{ckpt_root}/{run}"
+                label = f"checkpoints/{run}/"
+            print(f">>> Downloading {label} ...")
+            objs = walk_keys(s3, remote_prefix)
             if not objs:
                 print("  (empty — nothing to download)")
                 continue
@@ -289,7 +295,7 @@ def cmd_get(s3, args) -> None:
                 s3.download_file(_bucket(), key, str(dest))
                 count += 1
                 print(f"\r  {count}/{len(objs)} files", end="", flush=True)
-            print(f"\r  {count} files → {local_run_dir}")
+            print(f"\r  {count} files → {local_run_dir / (args.subdir or '')}")
 
     # ── Logs ─────────────────────────────────────────────────────────────────
     if do_logs:
@@ -464,6 +470,9 @@ def main() -> None:
     get_g.add_argument("--logs-only",        action="store_true", help="Download only logs")
     get_g.add_argument("--checkpoints-only", action="store_true", help="Download only checkpoints")
     get_p.add_argument("--run", metavar="NAME", help="Download a specific run only")
+    get_p.add_argument(
+        "--subdir", metavar="SUBDIR", help="Download only a sub-directory of the run, e.g. 'runs' or 'final_model'"
+    )
 
     clean_p = sub.add_parser("clean", help="Delete obsolete data from the network volume")
     what = clean_p.add_mutually_exclusive_group(required=True)

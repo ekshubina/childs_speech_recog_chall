@@ -1,48 +1,67 @@
 #!/usr/bin/env bash
-# Run TensorBoard locally against the Google Drive checkpoint logs.
-# Works with Google Drive for Desktop on macOS (CloudStorage mount).
+# Run TensorBoard locally against downloaded checkpoint logs.
+#
+# Lookup order:
+#   1. checkpoints/<run>/runs/  (local — synced via pod_storage.py get)
+#   2. Google Drive for Desktop (macOS CloudStorage mount)
+#
+# Usage: ./scripts/tensorboard_local.sh [run_name] [port]
+#   run_name defaults to baseline_whisper_small
+#   port     defaults to 6006
+#
+# To download only the TensorBoard logs from S3 (fast — ~91 KB):
+#   python scripts/pod_storage.py get --checkpoints-only --run baseline_whisper_small --subdir runs
 
 set -euo pipefail
 
 RUN_NAME="${1:-baseline_whisper_small}"
 PORT="${2:-6006}"
 
-# ── Locate Google Drive "My Drive" on macOS ──────────────────────────────────
-GDRIVE_ROOT=""
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# 1. Google Drive for Desktop (modern) — ~/Library/CloudStorage/GoogleDrive-*/My Drive
-while IFS= read -r candidate; do
-    if [[ -d "$candidate" ]]; then
-        GDRIVE_ROOT="$candidate"
-        break
+LOGDIR=""
+
+# ── 1. Local checkpoints/ (preferred) ───────────────────────────────────────
+LOCAL_LOGDIR="$REPO_ROOT/checkpoints/$RUN_NAME/runs"
+if [[ -d "$LOCAL_LOGDIR" ]]; then
+    LOGDIR="$LOCAL_LOGDIR"
+    echo "✓  Using local logdir : $LOGDIR"
+fi
+
+# ── 2. Google Drive fallback ─────────────────────────────────────────────────
+if [[ -z "$LOGDIR" ]]; then
+    GDRIVE_ROOT=""
+    while IFS= read -r candidate; do
+        if [[ -d "$candidate" ]]; then
+            GDRIVE_ROOT="$candidate"
+            break
+        fi
+    done < <(find "$HOME/Library/CloudStorage" -maxdepth 2 -name "My Drive" 2>/dev/null | sort)
+
+    if [[ -z "$GDRIVE_ROOT" && -d "/Volumes/GoogleDrive/My Drive" ]]; then
+        GDRIVE_ROOT="/Volumes/GoogleDrive/My Drive"
     fi
-done < <(find "$HOME/Library/CloudStorage" -maxdepth 2 -name "My Drive" 2>/dev/null | sort)
 
-# 2. Legacy mount point
-if [[ -z "$GDRIVE_ROOT" && -d "/Volumes/GoogleDrive/My Drive" ]]; then
-    GDRIVE_ROOT="/Volumes/GoogleDrive/My Drive"
+    if [[ -n "$GDRIVE_ROOT" ]]; then
+        GDRIVE_LOGDIR="$GDRIVE_ROOT/childs_speech_recog_chall/checkpoints/$RUN_NAME/runs"
+        if [[ -d "$GDRIVE_LOGDIR" ]]; then
+            LOGDIR="$GDRIVE_LOGDIR"
+            echo "✓  Using Google Drive logdir : $LOGDIR"
+        fi
+    fi
 fi
 
-if [[ -z "$GDRIVE_ROOT" ]]; then
-    echo "❌  Google Drive 'My Drive' not found."
-    echo "    Make sure Google Drive for Desktop is running and signed in."
-    exit 1
-fi
-
-LOGDIR="$GDRIVE_ROOT/childs_speech_recog_chall/checkpoints/$RUN_NAME/runs"
-
-if [[ ! -d "$LOGDIR" ]]; then
-    echo "❌  Log directory not found:"
-    echo "    $LOGDIR"
+if [[ -z "$LOGDIR" ]]; then
+    echo "❌  No TensorBoard logs found for run '$RUN_NAME'."
     echo ""
-    echo "    Has training started yet?  Check that the run name is correct."
-    echo "    Usage: $0 [run_name] [port]"
-    echo "    Default run_name: baseline_whisper_small"
+    echo "Download them first (fast — only ~91 KB):"
+    echo "  python scripts/pod_storage.py get --checkpoints-only --run $RUN_NAME --subdir runs"
+    echo ""
+    echo "Then re-run: $0 $RUN_NAME $PORT"
     exit 1
 fi
 
-echo "✓  Google Drive found : $GDRIVE_ROOT"
-echo "✓  TensorBoard logdir : $LOGDIR"
 echo "✓  Starting TensorBoard on http://localhost:$PORT"
 echo ""
 
